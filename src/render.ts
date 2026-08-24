@@ -21,11 +21,13 @@ export function textHtml(vm: ViewModel, first: number, count: number): string {
 }
 
 export function minRowCount(vm: ViewModel): number {
+  if (vm.min === null) return 0;
   return Math.max(1, Math.ceil(vm.min.length / MIN_CHUNK));
 }
 
 export function minHtml(vm: ViewModel, first: number, count: number): string {
   const M = vm.min;
+  if (M === null) return '';
   const tok = vm.tokM;
   const rows = minRowCount(vm);
   const last = Math.min(first + count, rows);

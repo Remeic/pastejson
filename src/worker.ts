@@ -1,10 +1,11 @@
-import { buildView, buildMinTokens, type ViewModel } from './viewmodel';
-import { flatten, type FlatTree } from './tree';
+import { buildView, buildMinTokens, ensureMin, type ViewModel } from './viewmodel';
+import { materializeLabels } from './serialize';
+import type { FlatTree } from './tree';
 
 // Worker path for big payloads (>256KB).
-// - parse+stringify+tokenize(pretty) happen here, buffers transfer back zero-copy
-// - parsed value + tree columns cached here; sent only on demand (getTree)
-// - minified tokens built lazily (getMinTok) — most sessions never open Minified
+// - parse + fused serialize (pretty/tokens/lines/tree) happen here
+// - buffers transfer back zero-copy
+// - parsed value + tree columns cached here; sent only on demand (getTree/getMin)
 
 let cachedValue: unknown = null;
 let cachedVM: ViewModel | null = null;
@@ -14,7 +15,7 @@ type InMsg =
   | { type: 'parse'; id: number; raw: string; indent: number | '\t' }
   | { type: 'reformat'; id: number; indent: number | '\t' }
   | { type: 'getTree'; id: number }
-  | { type: 'getMinTok'; id: number };
+  | { type: 'getMin'; id: number };
 
 const wself = self as unknown as Worker;
 
@@ -38,12 +39,17 @@ self.onmessage = (e: MessageEvent<InMsg>): void => {
   }
   if (m.type === 'reformat' && cachedValue !== null) {
     cachedVM = buildView(cachedValue, m.indent, cachedVM?.bytesIn ?? -1);
+    cachedTree = null;
     replyVM(m.id, cachedVM, 0);
     return;
   }
-  if (m.type === 'getTree' && cachedValue !== null) {
-    if (!cachedTree) cachedTree = flatten(cachedValue);
+  if (m.type === 'getTree' && cachedVM !== null) {
+    // tree structure already built by the fused pass — materialize labels here
+    if (cachedTree === null) cachedTree = cachedVM.tree;
     const t = cachedTree;
+    cachedTree = null; // buffers detached after transfer
+    if (t === null) return;
+    materializeLabels(t, cachedVM.pretty, cachedVM.tokP);
     wself.postMessage(
       {
         id: m.id,
@@ -69,10 +75,11 @@ self.onmessage = (e: MessageEvent<InMsg>): void => {
     );
     return;
   }
-  if (m.type === 'getMinTok' && cachedVM !== null) {
+  if (m.type === 'getMin' && cachedVM !== null) {
+    const min = ensureMin(cachedVM);
     buildMinTokens(cachedVM);
     wself.postMessage(
-      { id: m.id, type: 'minTok', tokMBuf: cachedVM.tokM!.buffer },
+      { id: m.id, type: 'min', min, tokMBuf: cachedVM.tokM!.buffer },
       [cachedVM.tokM!.buffer] as unknown as Transferable[],
     );
   }
@@ -84,9 +91,9 @@ function replyVM(id: number, vm: ViewModel, ms: number): void {
       id,
       ok: true,
       pretty: vm.pretty,
-      min: vm.min,
       lines: vm.lines,
       maxLen: vm.maxLen,
+      indent: vm.indent,
       ms,
       lineStartsBuf: vm.lineStarts.buffer,
       tokPBuf: vm.tokP.buffer,

@@ -1,6 +1,7 @@
 import './style.css';
 import { parseJson } from './parse';
-import { buildView, type ViewModel } from './viewmodel';
+import { buildView, ensureMin, type ViewModel } from './viewmodel';
+import { materializeLabels } from './serialize';
 import type { FlatTree } from './tree';
 import { flatten, buildVisible } from './tree';
 import { VScroll } from './vscroll';
@@ -46,6 +47,7 @@ let indent: number | '\t' = 2;
 let reqId = 0;
 let lastRaw = '';
 let bytesIn = 0;
+let wantCopyMin = false;
 let scroller: VScroll | null = null;
 
 // ---------- char width probe (for h-scroll width estimate) ----------
@@ -99,9 +101,9 @@ function ensureWorker(): Worker {
           id: number;
           ok: boolean;
           pretty: string;
-          min: string;
           lines: number;
           maxLen: number;
+          indent: number | '\t';
           lineStartsBuf: ArrayBuffer;
           tokPBuf: ArrayBuffer;
           ms?: number;
@@ -121,7 +123,7 @@ function ensureWorker(): Worker {
           keys: string[];
           vals: string[];
         }
-      | { id: number; type: 'minTok'; tokMBuf: ArrayBuffer }
+      | { id: number; type: 'min'; min: string; tokMBuf: ArrayBuffer }
     >,
   ) => {
     const m = e.data;
@@ -129,9 +131,11 @@ function ensureWorker(): Worker {
     if ('type' in m && m.type === 'tree') {
       ft = {
         depth: new Uint16Array(m.depthBuf),
-        kind: new Uint8Array(m.kindBuf),
+        kind: new Int32Array(m.kindBuf),
         keyIdx: new Int32Array(m.keyIdxBuf),
         valIdx: new Int32Array(m.valIdxBuf),
+        keyTokIdx: new Int32Array(0),
+        valTokIdx: new Int32Array(0),
         meta: new Int32Array(m.metaBuf),
         subtreeRows: new Int32Array(m.subtreeRowsBuf),
         keys: m.keys,
@@ -146,9 +150,18 @@ function ensureWorker(): Worker {
       }
       return;
     }
-    if ('type' in m && m.type === 'minTok') {
-      if (vm) vm.tokM = new Int32Array(m.tokMBuf);
-      if (mode === 'loaded' && curView === 'min' && scroller) scroller.schedule();
+    if ('type' in m && m.type === 'min') {
+      if (vm) {
+        vm.min = m.min;
+        vm.tokM = new Int32Array(m.tokMBuf);
+      }
+      if (wantCopyMin && vm?.min) {
+        wantCopyMin = false;
+        void copyText(vm.min);
+      }
+      if (mode === 'loaded' && curView === 'min') {
+        mountScroller('min', -1); // now with real row count + tokens
+      }
       return;
     }
     if (!m.ok) {
@@ -157,12 +170,15 @@ function ensureWorker(): Worker {
     }
     vm = {
       pretty: m.pretty,
-      min: m.min,
+      min: null,
+      source: null, // big path: value lives in the worker
+      indent: m.indent,
+      lineStarts: new Uint32Array(m.lineStartsBuf),
       lines: m.lines,
       maxLen: m.maxLen,
-      lineStarts: new Uint32Array(m.lineStartsBuf),
       tokP: new Int32Array(m.tokPBuf),
       tokM: null,
+      tree: null,
       bytesIn,
     };
     ft = null;
@@ -251,19 +267,32 @@ function mountScroller(v: ViewName, anchorTopVisual: number): void {
     scroller.setWidth(vm!.maxLen * charW + 72);
     scroller.setRowCount(vm!.lines);
   } else if (v === 'min') {
+    const minStr = vm!.min;
     scroller = new VScroll(viewEl, {
       rowH: ROW_H,
       overscan: OVERSCAN,
       paint: (a, b) => minHtml(vm!, a, b),
     });
-    scroller.setWidth(vm!.min.length * charW + 72);
-    scroller.setRowCount(minRowCount(vm!));
-    if (!vm!.tokM) ensureWorker().postMessage({ type: 'getMinTok', id: reqId });
+    if (minStr === null) {
+      // lazy: request from worker, paint chip meanwhile
+      ensureWorker().postMessage({ type: 'getMin', id: reqId });
+      statusbar.textContent = 'preparing minified…';
+      scroller.setWidth(0);
+      scroller.setRowCount(0);
+    } else {
+      scroller.setWidth(minStr.length * charW + 72);
+      scroller.setRowCount(minRowCount(vm!));
+    }
   } else {
     if (!ft) {
-      if (parsedValue !== null) {
-        // small doc: flatten locally
-        ft = flatten(parsedValue);
+      if (vm?.tree) {
+        // small doc: structure came free with the fused pass; labels lazy
+        ft = vm.tree;
+        if (ft.keyIdx.length !== ft.rowCount) materializeLabels(ft, vm!.pretty, vm!.tokP);
+        expanded = new Uint8Array(ft.rowCount).fill(1);
+        visibleRows = buildVisible(ft, expanded);
+      } else if (parsedValue !== null) {
+        ft = flatten(parsedValue, vm?.lines);
         expanded = new Uint8Array(ft.rowCount).fill(1);
         visibleRows = buildVisible(ft, expanded);
       } else {
@@ -362,7 +391,15 @@ toolbar.addEventListener('click', (e) => {
   if (!el) return;
   if (el.id === 'btn-new') return resetToLanding();
   if (el.id === 'btn-copyp') return copyText(vm?.pretty ?? '');
-  if (el.id === 'btn-copym') return copyText(vm?.min ?? '');
+  if (el.id === 'btn-copym') {
+    if (!vm) return;
+    if (vm.min !== null) return copyText(vm.min);
+    if (vm.source !== null) return copyText(ensureMin(vm)); // small path: local
+    wantCopyMin = true;
+    ensureWorker().postMessage({ type: 'getMin', id: reqId });
+    toast('preparing…');
+    return;
+  }
   const v = el.dataset.view as ViewName | undefined;
   if (v && v !== curView) {
     curView = v;
