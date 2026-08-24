@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Paste JSON. See it formatted. Instantly. 100% local, nothing leaves your browser." />
+    <title>pastejson — instant JSON viewer</title>
+  </head>
+  <body data-mode="landing">
+    <div id="brand"><b>paste</b>json</div>
+
+    <div id="toolbar" hidden>
+      <button id="btn-new" title="Clear (Esc)">＋ New</button>
+      <div class="seg" role="tablist" aria-label="View">
+        <button data-view="text" class="on">Text</button>
+        <button data-view="tree">Tree</button>
+        <button data-view="min">Minified</button>
+      </div>
+      <label class="indent-label">indent
+        <select id="sel-indent" aria-label="Indent size">
+          <option value="2" selected>2</option>
+          <option value="4">4</option>
+          <option value="tab">Tab</option>
+        </select>
+      </label>
+      <span class="spacer"></span>
+      <button id="btn-copyp">Copy formatted</button>
+      <button id="btn-copym">Copy minified</button>
+    </div>
+
+    <div id="statusbar"></div>
+    <div id="errbanner" hidden></div>
+
+    <section id="landing">
+      <p class="claim">⚡ the fastest JSON viewer — multi-MB files in milliseconds</p>
+      <h1>Paste JSON.<br />See it formatted.</h1>
+      <p class="hint"><kbd>⌘V</kbd> / <kbd>Ctrl+V</kbd> anywhere &nbsp;·&nbsp; or drop a .json file</p>
+      <p class="sub">100% local — your data never leaves the browser</p>
+    </section>
+
+    <textarea
+      id="in"
+      autofocus
+      spellcheck="false"
+      autocomplete="off"
+      autocapitalize="off"
+      aria-label="JSON input"
+    ></textarea>
+
+    <main id="out" hidden>
+      <pre id="rawprev" hidden></pre>
+      <div id="view"></div>
+    </main>
+
+    <div id="toast" role="status"></div>
+    <div id="drop-overlay" hidden>Drop JSON file…</div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
