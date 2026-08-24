@@ -35,13 +35,14 @@ const dropOverlay = $('drop-overlay');
 
 // ---------- state ----------
 type ViewName = 'text' | 'tree' | 'min';
+type Mode = 'landing' | 'working' | 'error' | 'loaded';
 
 let vm: ViewModel | null = null;
 let ft: FlatTree | null = null;
 let expanded: Uint8Array | null = null;
 let visibleRows: Int32Array | null = null;
 let parsedValue: unknown = null; // small-path only (worker holds its own copy)
-let mode: string = 'landing';
+let mode: Mode = 'landing';
 let curView: ViewName = 'text';
 let indent: number | '\t' = 2;
 let reqId = 0;
@@ -67,7 +68,7 @@ function ensureCharW(): void {
 }
 
 // ---------- helpers ----------
-function setMode(m: string): void {
+function setMode(m: Mode): void {
   mode = m;
   body.dataset.mode = m;
 }
@@ -221,8 +222,6 @@ function load(raw: string): void {
   ft = null;
   enterView(performance.now() - t0);
 }
-
-
 
 function showError(
   message: string,
@@ -460,7 +459,6 @@ async function copyText(s: string): Promise<void> {
   if (!s) return;
   try {
     await navigator.clipboard.writeText(s);
-    toast(`Copied ${humanBytes(s.length)}`);
   } catch {
     const ta = document.createElement('textarea');
     ta.value = s;
@@ -470,8 +468,8 @@ async function copyText(s: string): Promise<void> {
     ta.select();
     document.execCommand('copy');
     ta.remove();
-    toast(`Copied ${humanBytes(s.length)}`);
   }
+  toast(`Copied ${humanBytes(s.length)}`);
 }
 
 function resetToLanding(): void {
@@ -498,6 +496,54 @@ function resetToLanding(): void {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && mode !== 'landing') resetToLanding();
 });
+
+// ---------- clipboard auto-load (best effort, zero main-thread cost) ----------
+const CLIPBOARD_CAP = 8 * 1024 * 1024; // 8MB guard
+let clipLoaded = false;
+
+// cheap leading-char probe before paying for a parse
+function looksLikeJson(t: string): boolean {
+  let i = 0;
+  const n = t.length;
+  while (i < n) {
+    const c = t.charCodeAt(i);
+    if (c === 32 || c === 9 || c === 10 || c === 13) i++;
+    else break;
+  }
+  if (i >= n) return false;
+  const c = t.charCodeAt(i);
+  return (
+    c === 123 || c === 91 || c === 34 || // { [ "
+    (c >= 48 && c <= 57) || c === 45 || c === 116 || c === 102 || c === 110 // - 0-9 t f n
+  );
+}
+
+async function tryClipboardAuto(): Promise<void> {
+  if (clipLoaded || mode !== 'landing') return;
+  try {
+    const read = navigator.clipboard?.readText;
+    if (!read) return;
+    const t = await read.call(navigator.clipboard);
+    if (!t || t.length > CLIPBOARD_CAP || !looksLikeJson(t)) return;
+    if (mode !== 'landing') return; // user acted first — never race them
+    clipLoaded = true;
+    inTa.value = t;
+    load(t);
+    toast('Loaded from clipboard');
+  } catch {
+    /* denied / needs gesture — stay silent */
+  }
+}
+
+// after first paint, off the critical path
+requestAnimationFrame(() => setTimeout(() => void tryClipboardAuto(), 0));
+
+// gesture-backed retry (Firefox/Safari require a gesture): once, silently
+const clipRetry = (): void => {
+  if (!clipLoaded && mode === 'landing') void tryClipboardAuto();
+};
+document.addEventListener('pointerdown', clipRetry, { once: true });
+document.addEventListener('keydown', clipRetry, { once: true });
 
 // service worker (prod only)
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {

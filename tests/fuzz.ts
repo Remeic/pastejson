@@ -3,7 +3,7 @@
 // Run: bun tests/fuzz.ts
 import assert from 'node:assert';
 import { emitJson, materializeLabels } from '../src/serialize';
-import { tokenize, T_BOUND } from '../src/tokenizer';
+import { tokenize } from '../src/tokenizer';
 import { buildVisible } from '../src/tree';
 
 // deterministic xorshift
@@ -68,17 +68,8 @@ for (let it = 0; it < 500; it++) {
   const r = emitJson(v, ind, 1000);
   const expected = JSON.stringify(v, null, ind);
   assert.strictEqual(r.pretty, expected, `pretty mismatch @${it}`);
-  // filter boundary markers, then compare with tokenize()
-  const mine: number[] = [];
-  {
-    for (let i = 0; i < r.tokens.length; i += 2) {
-      if (r.tokens[i + 1] !== T_BOUND) {
-        mine.push(r.tokens[i], r.tokens[i + 1]);
-      }
-    }
-  }
   const toks = tokenize(r.pretty);
-  assert.deepStrictEqual(mine, [...toks], `tokens mismatch @${it}`);
+  assert.deepStrictEqual([...r.tokens], [...toks], `tokens mismatch @${it}`);
   assert.strictEqual(r.tree.rowCount, countNodes(v), `rowCount mismatch @${it}`);
   assert.strictEqual(r.lines, r.lineStarts.length, `lines mismatch @${it}`);
   const vis = buildVisible(r.tree, new Uint8Array(r.tree.rowCount).fill(1));

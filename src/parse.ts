@@ -91,7 +91,7 @@ export function parseInput(raw: string): InputResult {
           line: i + 1,
           col: inLine >= 0 ? inLine + 1 : 0,
           offset: lineStart + (inLine >= 0 ? inLine : 0),
-          lineText: trimmed.length > 200 ? trimmed.slice(0, 200) : trimmed,
+          lineText: trimmed.slice(0, 200),
         };
       }
       lineStart += l.length + 1;

@@ -43,10 +43,11 @@ export function buildView(value: unknown, indent: number | '\t', bytesIn: number
 }
 
 export function ensureMin(vm: ViewModel): string {
-  if (vm.min === null) vm.min = JSON.stringify(vm.source);
-  return vm.min;
+  let m = vm.min;
+  if (m === null) m = vm.min = JSON.stringify(vm.source);
+  return m;
 }
 
 export function buildMinTokens(vm: ViewModel): void {
-  if (!vm.tokM) vm.tokM = tokenize(ensureMin(vm));
+  if (vm.tokM === null) vm.tokM = tokenize(ensureMin(vm));
 }

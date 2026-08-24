@@ -21,82 +21,19 @@ type InMsg =
 
 const wself = self as unknown as Worker;
 
-self.onmessage = (e: MessageEvent<InMsg>): void => {
-  const m = e.data;
-  if (m.type === 'parse') {
-    try {
-      const t0 = performance.now();
-      const r = parseInput(m.raw);
-      if (r.kind === 'error') {
-        wself.postMessage({
-          id: m.id,
-          ok: false,
-          message: r.message,
-          offset: r.offset,
-          line: r.line,
-          col: r.col,
-          lineText: r.lineText,
-        });
-        return;
-      }
-      cachedValue = r.value;
-      cachedDocs = r.kind === 'jsonl' ? r.docs : 0;
-      cachedTree = null;
-      cachedVM = buildView(cachedValue, m.indent, m.raw.length);
-      replyVM(m.id, cachedVM, performance.now() - t0);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      wself.postMessage({ id: m.id, ok: false, message, offset: -1 });
-    }
-    return;
-  }
-  if (m.type === 'reformat' && cachedValue !== null) {
-    cachedVM = buildView(cachedValue, m.indent, cachedVM?.bytesIn ?? -1);
-    cachedTree = null;
-    replyVM(m.id, cachedVM, 0);
-    return;
-  }
-  if (m.type === 'getTree' && cachedVM !== null) {
-    // tree structure already built by the fused pass — materialize labels here
-    if (cachedTree === null) cachedTree = cachedVM.tree;
-    const t = cachedTree;
-    cachedTree = null; // buffers detached after transfer
-    if (t === null) return;
-    materializeLabels(t, cachedVM.pretty, cachedVM.tokP);
-    wself.postMessage(
-      {
-        id: m.id,
-        type: 'tree',
-        rowCount: t.rowCount,
-        depthBuf: t.depth.buffer,
-        kindBuf: t.kind.buffer,
-        keyIdxBuf: t.keyIdx.buffer,
-        valIdxBuf: t.valIdx.buffer,
-        metaBuf: t.meta.buffer,
-        subtreeRowsBuf: t.subtreeRows.buffer,
-        keys: t.keys,
-        vals: t.vals,
-      },
-      [
-        t.depth.buffer,
-        t.kind.buffer,
-        t.keyIdx.buffer,
-        t.valIdx.buffer,
-        t.meta.buffer,
-        t.subtreeRows.buffer,
-      ] as unknown as Transferable[],
-    );
-    return;
-  }
-  if (m.type === 'getMin' && cachedVM !== null) {
-    const min = ensureMin(cachedVM);
-    buildMinTokens(cachedVM);
-    wself.postMessage(
-      { id: m.id, type: 'min', min, tokMBuf: cachedVM.tokM!.buffer },
-      [cachedVM.tokM!.buffer] as unknown as Transferable[],
-    );
-  }
-};
+// One fixed-shape, fixed-key-order literal per message kind → structured clone
+// hits the fast monomorphic path. Error replies share a single shape
+// (parse-error and unexpected-error differ only in field VALUES).
+function replyErr(
+  id: number,
+  message: string,
+  offset: number,
+  line = 0,
+  col = 0,
+  lineText = '',
+): void {
+  wself.postMessage({ id, ok: false, message, offset, line, col, lineText });
+}
 
 function replyVM(id: number, vm: ViewModel, ms: number): void {
   wself.postMessage(
@@ -115,3 +52,84 @@ function replyVM(id: number, vm: ViewModel, ms: number): void {
     [vm.lineStarts.buffer, vm.tokP.buffer] as unknown as Transferable[],
   );
 }
+
+function replyTree(id: number, t: FlatTree): void {
+  wself.postMessage(
+    {
+      id,
+      type: 'tree',
+      rowCount: t.rowCount,
+      depthBuf: t.depth.buffer,
+      kindBuf: t.kind.buffer,
+      keyIdxBuf: t.keyIdx.buffer,
+      valIdxBuf: t.valIdx.buffer,
+      metaBuf: t.meta.buffer,
+      subtreeRowsBuf: t.subtreeRows.buffer,
+      keys: t.keys,
+      vals: t.vals,
+    },
+    [
+      t.depth.buffer,
+      t.kind.buffer,
+      t.keyIdx.buffer,
+      t.valIdx.buffer,
+      t.meta.buffer,
+      t.subtreeRows.buffer,
+    ] as unknown as Transferable[],
+  );
+}
+
+self.onmessage = (e: MessageEvent<InMsg>): void => {
+  const m = e.data;
+  switch (m.type) {
+    case 'parse': {
+      try {
+        const t0 = performance.now();
+        const r = parseInput(m.raw);
+        if (r.kind === 'error') {
+          replyErr(m.id, r.message, r.offset, r.line, r.col, r.lineText);
+          return;
+        }
+        cachedValue = r.value;
+        cachedDocs = r.kind === 'jsonl' ? r.docs : 0;
+        cachedTree = null;
+        cachedVM = buildView(cachedValue, m.indent, m.raw.length);
+        replyVM(m.id, cachedVM, performance.now() - t0);
+      } catch (err) {
+        replyErr(m.id, err instanceof Error ? err.message : String(err), -1);
+      }
+      return;
+    }
+    case 'reformat': {
+      // cachedValue !== null implies cachedVM !== null (both set in 'parse')
+      const prev = cachedVM;
+      if (cachedValue === null || prev === null) return;
+      cachedVM = buildView(cachedValue, m.indent, prev.bytesIn);
+      cachedTree = null;
+      replyVM(m.id, cachedVM, 0);
+      return;
+    }
+    case 'getTree': {
+      const vm = cachedVM;
+      if (vm === null) return;
+      // tree structure already built by the fused pass — materialize labels here
+      const t = cachedTree ?? vm.tree;
+      cachedTree = null; // buffers detached after transfer
+      if (t === null) return;
+      materializeLabels(t, vm.pretty, vm.tokP);
+      replyTree(m.id, t);
+      return;
+    }
+    case 'getMin': {
+      const vm = cachedVM;
+      if (vm === null) return;
+      const min = ensureMin(vm);
+      buildMinTokens(vm); // ensureMin inside is now a cache hit
+      wself.postMessage(
+        { id: m.id, type: 'min', min, tokMBuf: vm.tokM!.buffer },
+        [vm.tokM!.buffer] as unknown as Transferable[],
+      );
+      return;
+    }
+  }
+};
