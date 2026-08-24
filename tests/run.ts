@@ -1,7 +1,7 @@
 // Plain assert-based test runner. Run: bun tests/run.ts
 import assert from 'node:assert';
 import { tokenize, T_STR, T_NUM, T_KEY, T_PUNCT, T_TRUE, T_FALSE, T_NULL } from '../src/tokenizer';
-import { parseJson } from '../src/parse';
+import { parseJson, parseInput } from '../src/parse';
 import { buildView, ensureMin } from '../src/viewmodel';
 import { flatten, buildVisible } from '../src/tree';
 import { rangeHtml } from '../src/highlight';
@@ -118,6 +118,55 @@ ok('rangeHtml wraps token classes + escapes html', () => {
   assert.ok(html.includes('<i class=k>') || html.includes('<i class=s>'));
   assert.ok(html.includes('&lt;')); // escaped
   assert.ok(!html.includes('<b')); // raw < never leaks unescaped as tag
+});
+
+// ---------- JSONL ----------
+ok('parseInput: single JSON stays json', () => {
+  const r = parseInput('{"a":1}');
+  assert.strictEqual(r.kind, 'json');
+  if (r.kind === 'json') assert.deepStrictEqual(r.value, { a: 1 });
+});
+
+ok('parseInput: pretty multi-line JSON stays json (not jsonl)', () => {
+  const r = parseInput('{\n  "a": 1\n}');
+  assert.strictEqual(r.kind, 'json');
+});
+
+ok('parseInput: two docs → jsonl', () => {
+  const r = parseInput('{"a":1}\n{"b":2}\n');
+  assert.strictEqual(r.kind, 'jsonl');
+  if (r.kind === 'jsonl') {
+    assert.strictEqual(r.docs, 2);
+    assert.deepStrictEqual(r.value, [{ a: 1 }, { b: 2 }]);
+  }
+});
+
+ok('parseInput: blank/whitespace lines skipped', () => {
+  const r = parseInput('1\n\n   \n"x"\n\n');
+  assert.strictEqual(r.kind, 'jsonl');
+  if (r.kind === 'jsonl') assert.strictEqual(r.docs, 2);
+});
+
+ok('parseInput: jsonl scalars', () => {
+  const r = parseInput('1\n"x"\nnull\ntrue');
+  assert.strictEqual(r.kind, 'jsonl');
+  if (r.kind === 'jsonl') assert.deepStrictEqual(r.value, [1, 'x', null, true]);
+});
+
+ok('parseInput: bad line after good → error with line/offset', () => {
+  const raw = '{"a":1}\n{"b":\n{"c":3}';
+  const r = parseInput(raw);
+  assert.strictEqual(r.kind, 'error');
+  if (r.kind === 'error') {
+    assert.strictEqual(r.line, 2); // second line is broken
+    assert.ok(r.offset >= raw.indexOf('{"b":'), 'offset points into raw');
+    assert.ok(r.lineText.includes('"b"'));
+  }
+});
+
+ok('parseInput: all-broken input → plain error (not jsonl)', () => {
+  const r = parseInput('{oops}\n{also bad}');
+  assert.strictEqual(r.kind, 'error');
 });
 
 console.log(`\n${passed} tests passed`);

@@ -1,5 +1,6 @@
 import { buildView, buildMinTokens, ensureMin, type ViewModel } from './viewmodel';
 import { materializeLabels } from './serialize';
+import { parseInput } from './parse';
 import type { FlatTree } from './tree';
 
 // Worker path for big payloads (>256KB).
@@ -10,6 +11,7 @@ import type { FlatTree } from './tree';
 let cachedValue: unknown = null;
 let cachedVM: ViewModel | null = null;
 let cachedTree: FlatTree | null = null;
+let cachedDocs = 0;
 
 type InMsg =
   | { type: 'parse'; id: number; raw: string; indent: number | '\t' }
@@ -24,16 +26,27 @@ self.onmessage = (e: MessageEvent<InMsg>): void => {
   if (m.type === 'parse') {
     try {
       const t0 = performance.now();
-      cachedValue = JSON.parse(m.raw);
+      const r = parseInput(m.raw);
+      if (r.kind === 'error') {
+        wself.postMessage({
+          id: m.id,
+          ok: false,
+          message: r.message,
+          offset: r.offset,
+          line: r.line,
+          col: r.col,
+          lineText: r.lineText,
+        });
+        return;
+      }
+      cachedValue = r.value;
+      cachedDocs = r.kind === 'jsonl' ? r.docs : 0;
       cachedTree = null;
       cachedVM = buildView(cachedValue, m.indent, m.raw.length);
       replyVM(m.id, cachedVM, performance.now() - t0);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      let offset = -1;
-      const mm = /position\s+(\d+)/i.exec(message);
-      if (mm) offset = Number(mm[1]);
-      wself.postMessage({ id: m.id, ok: false, message, offset });
+      wself.postMessage({ id: m.id, ok: false, message, offset: -1 });
     }
     return;
   }
@@ -95,6 +108,7 @@ function replyVM(id: number, vm: ViewModel, ms: number): void {
       maxLen: vm.maxLen,
       indent: vm.indent,
       ms,
+      docs: cachedDocs,
       lineStartsBuf: vm.lineStarts.buffer,
       tokPBuf: vm.tokP.buffer,
     },

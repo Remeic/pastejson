@@ -21,6 +21,7 @@ export interface ViewModel {
   tokM: Int32Array | null; // lazy
   tree: FlatTree | null; // fused walk output; null on main for big docs (worker owns it)
   bytesIn: number;
+  docs: number; // >0 = JSONL document count
 }
 
 export function buildView(value: unknown, indent: number | '\t', bytesIn: number): ViewModel {
@@ -37,6 +38,7 @@ export function buildView(value: unknown, indent: number | '\t', bytesIn: number
     tokM: null,
     tree: r.tree,
     bytesIn,
+    docs: 0,
   };
 }
 

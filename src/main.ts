@@ -1,5 +1,5 @@
 import './style.css';
-import { parseJson } from './parse';
+import { parseInput } from './parse';
 import { buildView, ensureMin, type ViewModel } from './viewmodel';
 import { materializeLabels } from './serialize';
 import type { FlatTree } from './tree';
@@ -83,7 +83,7 @@ function toast(msg: string): void {
 function fmtStatus(ms: number): void {
   if (!vm) return;
   const parts = [
-    humanBytes(bytesIn),
+    vm.docs > 0 ? `${vm.docs.toLocaleString('en-US')} docs · JSONL` : humanBytes(bytesIn),
     `${vm.lines.toLocaleString('en-US')} lines`,
     ms > 0 ? `${Math.round(ms)} ms` : '',
   ];
@@ -104,6 +104,7 @@ function ensureWorker(): Worker {
           lines: number;
           maxLen: number;
           indent: number | '\t';
+          docs: number;
           lineStartsBuf: ArrayBuffer;
           tokPBuf: ArrayBuffer;
           ms?: number;
@@ -180,6 +181,7 @@ function ensureWorker(): Worker {
       tokM: null,
       tree: null,
       bytesIn,
+      docs: m.docs ?? 0,
     };
     ft = null;
     enterView(m.ms ?? 0);
@@ -208,13 +210,14 @@ function load(raw: string): void {
   }
 
   const t0 = performance.now();
-  const r = parseJson(raw);
-  if (!r.ok) {
-    showError(r.message, r.offset >= 0 ? r.offset : -1, r.line, r.col, r.lineText);
+  const r = parseInput(raw);
+  if (r.kind === 'error') {
+    showError(r.message, r.offset, r.line, r.col, r.lineText);
     return;
   }
   parsedValue = r.value;
   vm = buildView(parsedValue, indent, bytesIn);
+  vm.docs = r.kind === 'jsonl' ? r.docs : 0;
   ft = null;
   enterView(performance.now() - t0);
 }
