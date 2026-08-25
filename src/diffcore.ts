@@ -95,6 +95,107 @@ interface Frame {
   row: number;
 }
 
+// Myers O(ND) over int-keyed sequences. Returns false when D exceeds the
+// cap or trace memory bound → caller falls back to pairwise.
+// Shared by the focus engine and the aligned engine. outSame is optional:
+// focus ignores equal pairs, aligned mirrors them.
+function myers(
+  a: Int32Array,
+  b: Int32Array,
+  outDel: (i: number) => void,
+  outAdd: (j: number) => void,
+  outSame?: (i: number, j: number) => void,
+): boolean {
+  const n = a.length;
+  const m = b.length;
+  if (n === 0) {
+    for (let j = 0; j < m; j++) outAdd(j);
+    return true;
+  }
+  if (m === 0) {
+    for (let i = 0; i < n; i++) outDel(i);
+    return true;
+  }
+  const maxD = n + m;
+  const w = 2 * maxD + 1;
+  const off = maxD;
+  // trace memory bound: (d+1)*w cells ≤ 8M ints (32MB) hard stop
+  const dCap = Math.min(MYERS_D_CAP, Math.floor((8 << 23) / w), maxD);
+  const v = new Int32Array(w);
+  const trace: Int32Array[] = [];
+  let found = -1;
+  for (let dd = 0; dd <= dCap; dd++) {
+    trace.push(v.slice());
+    for (let k = -dd; k <= dd; k += 2) {
+      let x: number;
+      if (k === -dd || (k !== dd && v[off + k - 1] < v[off + k + 1])) x = v[off + k + 1];
+      else x = v[off + k - 1] + 1;
+      let y = x - k;
+      while (x < n && y < m && a[x] === b[y]) {
+        x++;
+        y++;
+      }
+      v[off + k] = x;
+      if (x >= n && y >= m) {
+        found = dd;
+        break;
+      }
+    }
+    if (found >= 0) break;
+  }
+  if (found < 0) return false;
+  // backtrack: edits collected in REVERSE document order, then flushed
+  // forward — single stream keeps row order natural
+  // op tags: 0 same, 1 add(b), 2 del(a)
+  const rev: number[] = []; // triples [tag, i, j]
+  let x = n;
+  let y = m;
+  const pushOp = (t: number, i: number, j: number): void => {
+    rev.push(t, i, j);
+  };
+  for (let dd = found; dd > 0; dd--) {
+    const vp = trace[dd];
+    const k = x - y;
+    let pk: number;
+    if (k === -dd || (k !== dd && vp[off + k - 1] < vp[off + k + 1])) pk = k + 1;
+    else pk = k - 1;
+    const px = vp[off + pk];
+    const py = px - pk;
+    while (x > px && y > py) {
+      pushOp(0, x - 1, y - 1);
+      x--;
+      y--;
+    }
+    if (pk === k - 1) {
+      pushOp(2, x - 1, -1);
+      x--;
+    } else {
+      pushOp(1, -1, y - 1);
+      y--;
+    }
+  }
+  while (x > 0 && y > 0) {
+    pushOp(0, x - 1, y - 1);
+    x--;
+    y--;
+  }
+  while (x > 0) {
+    pushOp(2, x - 1, -1);
+    x--;
+  }
+  while (y > 0) {
+    pushOp(1, -1, y - 1);
+    y--;
+  }
+  for (let r = rev.length - 3; r >= 0; r -= 3) {
+    const t = rev[r];
+    if (t === 0) outSame?.(rev[r + 1], rev[r + 2]);
+    else if (t === 1) outAdd(rev[r + 2]);
+    else outDel(rev[r + 1]);
+  }
+  return true;
+}
+
 export function diffJson(a: unknown, b: unknown): DiffResult {
   const colOp = new I32(256);
   const colKind = new I32(256);
@@ -350,109 +451,6 @@ export function diffJson(a: unknown, b: unknown): DiffResult {
     while (j < em) subtree(b[j++], OP_ADD, d, -1);
   }
 
-  // Myers O(ND) over int-keyed sequences. Returns false when D exceeds the
-  // cap or trace memory bound → caller falls back to pairwise.
-  function myers(
-    a: Int32Array,
-    b: Int32Array,
-    outDel: (i: number) => void,
-    outAdd: (j: number) => void,
-  ): boolean {
-    const n = a.length;
-    const m = b.length;
-    if (n === 0) {
-      for (let j = 0; j < m; j++) outAdd(j);
-      return true;
-    }
-    if (m === 0) {
-      for (let i = 0; i < n; i++) outDel(i);
-      return true;
-    }
-    const maxD = n + m;
-    const w = 2 * maxD + 1;
-    const off = maxD;
-    // trace memory bound: (d+1)*w cells ≤ 8M ints (32MB) hard stop
-    const dCap = Math.min(MYERS_D_CAP, Math.floor((8 << 23) / w), maxD);
-    const v = new Int32Array(w);
-    const trace: Int32Array[] = [];
-    let found = -1;
-    for (let dd = 0; dd <= dCap; dd++) {
-      trace.push(v.slice());
-      for (let k = -dd; k <= dd; k += 2) {
-        let x: number;
-        if (k === -dd || (k !== dd && v[off + k - 1] < v[off + k + 1])) x = v[off + k + 1];
-        else x = v[off + k - 1] + 1;
-        let y = x - k;
-        while (x < n && y < m && a[x] === b[y]) {
-          x++;
-          y++;
-        }
-        v[off + k] = x;
-        if (x >= n && y >= m) {
-          found = dd;
-          break;
-        }
-      }
-      if (found >= 0) break;
-    }
-    if (found < 0) return false;
-    // backtrack → collect reversed, emit forward
-    const rd: number[] = [];
-    const ra: number[] = [];
-    let x = n;
-    let y = m;
-    for (let dd = found; dd > 0; dd--) {
-      const vp = trace[dd];
-      const k = x - y;
-      let pk: number;
-      if (k === -dd || (k !== dd && vp[off + k - 1] < vp[off + k + 1])) pk = k + 1;
-      else pk = k - 1;
-      const px = vp[off + pk];
-      const py = px - pk;
-      while (x > px && y > py) {
-        x--;
-        y--;
-      }
-      if (pk === k - 1) {
-        rd.push(x - 1);
-        x--;
-      } else {
-        ra.push(y - 1);
-        y--;
-      }
-    }
-    while (x > 0 && y > 0) {
-      x--;
-      y--;
-    }
-    while (x > 0) {
-      rd.push(x - 1);
-      x--;
-    }
-    while (y > 0) {
-      ra.push(y - 1);
-      y--;
-    }
-    // forward order: merge del/add streams by original index
-    let di = rd.length - 1;
-    let ai = ra.length - 1;
-    for (;;) {
-      const dv = di >= 0 ? rd[di] : Number.MAX_SAFE_INTEGER;
-      const av = ai >= 0 ? ra[ai] : Number.MAX_SAFE_INTEGER;
-      if (dv === Number.MAX_SAFE_INTEGER && av === Number.MAX_SAFE_INTEGER) break;
-      // interleave by position: whichever index is smaller comes first;
-      // ties impossible (one index space per side) — order stable either way
-      if (dv <= av) {
-        outDel(dv);
-        di--;
-      } else {
-        outAdd(av);
-        ai--;
-      }
-    }
-    return true;
-  }
-
   // ---- root ----
   if (!sameDeep(a, b)) walkInto(a, b, 0, -1);
 
@@ -479,5 +477,414 @@ export function diffJson(a: unknown, b: unknown): DiffResult {
     maxChars,
     adds,
     dels,
+  };
+}
+
+// ---------- aligned builder (side-by-side) ----------
+// Full synchronized emission: EVERY node of both docs becomes a visual pair
+// (left cell / right cell). Computed only when the user switches to
+// side-by-side — the focus path above stays the cheap default.
+// Soundness shortcuts (no comparisons needed):
+// - ref/primitive-equal pairs → mirror emit
+// - Myers "same" ⇒ stringify-equal ⇒ mirror emit
+export const OP_MOD = 3;
+
+export interface AlignedResult {
+  op: Uint8Array; // OP_* per pair
+  lRow: Int32Array; // row id in left columns, -1 = empty cell
+  rRow: Int32Array; // row id in right columns, -1 = empty cell
+  lKind: Uint8Array;
+  lDepth: Uint16Array;
+  lKey: Int32Array;
+  lVal: Int32Array;
+  lMeta: Int32Array;
+  rKind: Uint8Array;
+  rDepth: Uint16Array;
+  rKey: Int32Array;
+  rVal: Int32Array;
+  rMeta: Int32Array;
+  lKeys: string[];
+  lVals: string[];
+  rKeys: string[];
+  rVals: string[];
+  rowCount: number;
+}
+
+interface AFrame {
+  o: unknown;
+  isArr: boolean;
+  ks: string[] | null;
+  len: number;
+  i: number;
+  d: number;
+  li: number;
+  ri: number;
+}
+
+export function diffAligned(a: unknown, b: unknown): AlignedResult {
+  // ONE intern table shared by both columns: same int ⇒ same key text;
+  // keys[] filled in lockstep at registration so ints stay valid per side
+  const keyMap = new Map<string, number>();
+  const lKeys: string[] = [];
+  const rKeys: string[] = [];
+  const keyOf = (k: string): number => {
+    let id = keyMap.get(k);
+    if (id === undefined) {
+      id = keyMap.size;
+      keyMap.set(k, id);
+      lKeys.push(k);
+      rKeys.push(k);
+    }
+    return id;
+  };
+
+  const mkCols = () => {
+    const kind = new I32(256);
+    const depth = new I32(256);
+    const key = new I32(256);
+    const val = new I32(256);
+    const meta = new I32(256);
+    const vals: string[] = [];
+    return {
+      kind,
+      depth,
+      key,
+      val,
+      meta,
+      vals,
+      leaf(pv: string, d: number, kId: number): number {
+        vals.push(pv);
+        kind.push(K_LEAF);
+        depth.push(d);
+        key.push(kId);
+        val.push(vals.length - 1);
+        meta.push(0);
+        return kind.len - 1;
+      },
+      branch(brKind: number, d: number, kId: number, m: number): number {
+        kind.push(brKind);
+        depth.push(d);
+        key.push(kId);
+        val.push(-1);
+        meta.push(m); // child count known upfront — no post-patch pass
+        return kind.len - 1;
+      },
+    };
+  };
+  const L = mkCols();
+  const R = mkCols();
+
+  const opC = new I32(1024);
+  const lrC = new I32(1024);
+  const rrC = new I32(1024);
+  const pair = (o: number, li: number, ri: number): void => {
+    opC.push(o);
+    lrC.push(li);
+    rrC.push(ri);
+  };
+
+  const childCount = (v: unknown, isArr: boolean): number =>
+    isArr ? (v as unknown[]).length : Object.keys(v as Record<string, unknown>).length;
+
+  const pool: AFrame[] = [];
+  let top = 0;
+  const getF = (): AFrame => {
+    let f = pool[top];
+    if (f === undefined) {
+      f = { o: null, isArr: false, ks: null, len: 0, i: 0, d: 0, li: -1, ri: -1 };
+      pool.push(f);
+    }
+    top++;
+    return f;
+  };
+
+  // whole subtree into ONE column; opposite cell stays empty (-1)
+  function flatSide(v: unknown, d: number, kId: number, right: boolean): void {
+    const op = right ? OP_ADD : OP_DEL;
+    const C = right ? R : L;
+    const put = (node: unknown, dd: number, kk: number): number => {
+      if (!isBr(node)) return C.leaf(preview(node), dd, kk);
+      const ia = Array.isArray(node);
+      return C.branch(ia ? K_ARR : K_OBJ, dd, kk, childCount(node, ia));
+    };
+    const row = put(v, d, kId);
+    pair(op, right ? -1 : row, right ? row : -1);
+    if (!isBr(v)) return;
+    let f = getF();
+    f.o = v;
+    f.isArr = Array.isArray(v);
+    f.ks = f.isArr ? null : Object.keys(v as Record<string, unknown>);
+    f.len = f.isArr ? (v as unknown[]).length : f.ks!.length;
+    f.i = 0;
+    f.d = d + 1;
+    while (top > 0) {
+      const cf = pool[top - 1];
+      if (cf.i >= cf.len) {
+        top--;
+        continue;
+      }
+      const ck = cf.isArr ? cf.i : cf.ks![cf.i];
+      const cv = cf.isArr
+        ? (cf.o as unknown[])[cf.i]
+        : (cf.o as Record<string, unknown>)[ck as string];
+      cf.i++;
+      const kid = cf.isArr ? -1 : keyOf(ck as string);
+      const crow = put(cv, cf.d, kid);
+      pair(op, right ? -1 : crow, right ? crow : -1);
+      if (isBr(cv)) {
+        const nf = getF();
+        nf.o = cv;
+        nf.isArr = Array.isArray(cv);
+        nf.ks = nf.isArr ? null : Object.keys(cv as Record<string, unknown>);
+        nf.len = nf.isArr ? (cv as unknown[]).length : nf.ks!.length;
+        nf.i = 0;
+        nf.d = cf.d + 1;
+        nf.li = -1;
+        nf.ri = -1;
+      }
+    }
+  }
+
+  // identical subtree mirrored into BOTH columns — zero comparisons
+  function flatBoth(v: unknown, d: number, kId: number): void {
+    const put = (node: unknown, dd: number, kk: number): [number, number] => {
+      if (!isBr(node)) {
+        const pv = preview(node);
+        return [L.leaf(pv, dd, kk), R.leaf(pv, dd, kk)];
+      }
+      const ia = Array.isArray(node);
+      const bk = ia ? K_ARR : K_OBJ;
+      const n = childCount(node, ia);
+      return [L.branch(bk, dd, kk, n), R.branch(bk, dd, kk, n)];
+    };
+    const [li0, ri0] = put(v, d, kId);
+    pair(OP_SAME, li0, ri0);
+    if (!isBr(v)) return;
+    let f = getF();
+    f.o = v;
+    f.isArr = Array.isArray(v);
+    f.ks = f.isArr ? null : Object.keys(v as Record<string, unknown>);
+    f.len = f.isArr ? (v as unknown[]).length : f.ks!.length;
+    f.i = 0;
+    f.d = d + 1;
+    f.li = li0;
+    f.ri = ri0;
+    while (top > 0) {
+      const cf = pool[top - 1];
+      if (cf.i >= cf.len) {
+        top--;
+        continue;
+      }
+      const ck = cf.isArr ? cf.i : cf.ks![cf.i];
+      const cv = cf.isArr
+        ? (cf.o as unknown[])[cf.i]
+        : (cf.o as Record<string, unknown>)[ck as string];
+      cf.i++;
+      const kid = cf.isArr ? -1 : keyOf(ck as string);
+      const [cli, cri] = put(cv, cf.d, kid);
+      pair(OP_SAME, cli, cri);
+      if (isBr(cv)) {
+        const nf = getF();
+        nf.o = cv;
+        nf.isArr = Array.isArray(cv);
+        nf.ks = nf.isArr ? null : Object.keys(cv as Record<string, unknown>);
+        nf.len = nf.isArr ? (cv as unknown[]).length : nf.ks!.length;
+        nf.i = 0;
+        nf.d = cf.d + 1;
+        nf.li = cli;
+        nf.ri = cri;
+      }
+    }
+  }
+
+  // synchronized walk; true = anything non-SAME emitted below this node
+  function walkSync(av: unknown, bv: unknown, d: number, kId: number): boolean {
+    const ba = isBr(av);
+    const bb = isBr(bv);
+    if (!ba && !bb) {
+      if (av === bv) {
+        // primitives only here — === is exact (post-parse, no NaN)
+        const pv = preview(av);
+        pair(OP_SAME, L.leaf(pv, d, kId), R.leaf(pv, d, kId));
+        return false;
+      }
+      pair(OP_MOD, L.leaf(preview(av), d, kId), R.leaf(preview(bv), d, kId));
+      return true;
+    }
+    if (ba !== bb || Array.isArray(av) !== Array.isArray(bv)) {
+      flatSide(av, d, kId, false);
+      flatSide(bv, d, kId, true);
+      return true;
+    }
+    const isArr = Array.isArray(av);
+    const na = childCount(av, isArr);
+    const nb = childCount(bv, isArr);
+    const pc = opC.len; // patch to MOD if a descendant changes
+    const bk = isArr ? K_ARR : K_OBJ;
+    pair(OP_SAME, L.branch(bk, d, kId, na), R.branch(bk, d, kId, nb));
+    let changed: boolean;
+    if (isArr) changed = arrSync(av as unknown[], bv as unknown[], d + 1);
+    else
+      changed = objSync(
+        av as Record<string, unknown>,
+        bv as Record<string, unknown>,
+        d + 1,
+      );
+    if (changed) opC.arr[pc] = OP_MOD;
+    return changed;
+  }
+
+  const hasOwn = (o: Record<string, unknown>, k: string): boolean =>
+    Object.prototype.hasOwnProperty.call(o, k);
+
+  function objSync(
+    a: Record<string, unknown>,
+    b: Record<string, unknown>,
+    d: number,
+  ): boolean {
+    let ch = false;
+    for (const k of Object.keys(a)) {
+      const kid = keyOf(k);
+      if (!hasOwn(b, k)) {
+        flatSide(a[k], d, kid, false);
+        ch = true;
+        continue;
+      }
+      if (walkSync(a[k], b[k], d, kid)) ch = true;
+    }
+    for (const k of Object.keys(b)) {
+      if (!hasOwn(a, k)) {
+        flatSide(b[k], d, keyOf(k), true);
+        ch = true;
+      }
+    }
+    return ch;
+  }
+
+  function arrSync(x: unknown[], y: unknown[], d: number): boolean {
+    const n = x.length;
+    const m = y.length;
+    let p = 0;
+    while (p < n && p < m && x[p] === y[p]) p++;
+    let s = 0;
+    while (s < n - p && s < m - p && x[n - 1 - s] === y[m - 1 - s]) s++;
+    for (let i = 0; i < p; i++) flatBoth(x[i], d, -1);
+    const en = n - s;
+    const em = m - s;
+    for (let i = en; i < n; i++) flatBoth(x[i], d, -1);
+    const mn = en - p;
+    const mm = em - p;
+    let ch = false;
+    if (mn === 0 || mm === 0) {
+      for (let i = p; i < en; i++) {
+        flatSide(x[i], d, -1, false);
+        ch = true;
+      }
+      for (let j = p; j < em; j++) {
+        flatSide(y[j], d, -1, true);
+        ch = true;
+      }
+      return ch;
+    }
+    const pairwiseMid = (): void => {
+      const lim = en < em ? en : em;
+      for (let i = p; i < lim; i++) if (walkSync(x[i], y[i], d, -1)) ch = true;
+      for (let i = lim; i < en; i++) {
+        flatSide(x[i], d, -1, false);
+        ch = true;
+      }
+      for (let j = lim; j < em; j++) {
+        flatSide(y[j], d, -1, true);
+        ch = true;
+      }
+    };
+    // shared intern across BOTH middles (same rule as focus path)
+    const intern = new Map<string, number>();
+    let used = 0;
+    const keyIdOf = (el: unknown): number => {
+      let k: string;
+      if (el === null || typeof el !== 'object') k = typeof el + ':' + String(el);
+      else {
+        k = JSON.stringify(el); // native floor
+        used += k.length;
+        if (used > KEY_BUDGET) return -1;
+      }
+      let id = intern.get(k);
+      if (id === undefined) {
+        id = intern.size;
+        intern.set(k, id);
+      }
+      return id;
+    };
+    const ia = new Int32Array(mn);
+    const ib = new Int32Array(mm);
+    let okB = true;
+    for (let i = 0; i < mn && okB; i++) {
+      const id = keyIdOf(x[p + i]);
+      if (id < 0) okB = false;
+      else ia[i] = id;
+    }
+    if (okB) {
+      for (let j = 0; j < mm && okB; j++) {
+        const id = keyIdOf(y[p + j]);
+        if (id < 0) okB = false;
+        else ib[j] = id;
+      }
+    }
+    if (
+      !okB ||
+      !myers(
+        ia,
+        ib,
+        (i) => {
+          flatSide(x[p + i], d, -1, false);
+          ch = true;
+        },
+        (j) => {
+          flatSide(y[p + j], d, -1, true);
+          ch = true;
+        },
+        // Myers "same" ⇒ stringify-equal ⇒ mirrored emission, zero compares
+        (i, j) => flatBoth(x[p + i], d, -1),
+      )
+    ) {
+      pairwiseMid();
+    }
+    return ch;
+  }
+
+  // ---- root ----
+  walkSync(a, b, 0, -1);
+
+  const u8 = (c: I32): Uint8Array => {
+    const t = new Uint8Array(c.len);
+    for (let i = 0; i < c.len; i++) t[i] = c.arr[i];
+    return t;
+  };
+  const u16 = (c: I32): Uint16Array => {
+    const t = new Uint16Array(c.len);
+    for (let i = 0; i < c.len; i++) t[i] = c.arr[i];
+    return t;
+  };
+  const trim = (c: I32): Int32Array => (c.len === c.arr.length ? c.arr : c.arr.slice(0, c.len));
+  return {
+    op: u8(opC),
+    lRow: trim(lrC),
+    rRow: trim(rrC),
+    lKind: u8(L.kind),
+    lDepth: u16(L.depth),
+    lKey: trim(L.key),
+    lVal: trim(L.val),
+    lMeta: trim(L.meta),
+    rKind: u8(R.kind),
+    rDepth: u16(R.depth),
+    rKey: trim(R.key),
+    rVal: trim(R.val),
+    rMeta: trim(R.meta),
+    lKeys,
+    lVals: L.vals,
+    rKeys,
+    rVals: R.vals,
+    rowCount: opC.len,
   };
 }

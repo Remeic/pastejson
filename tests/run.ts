@@ -5,7 +5,7 @@ import { parseJson, parseInput } from '../src/parse';
 import { buildView, ensureMin } from '../src/viewmodel';
 import { flatten, buildVisible } from '../src/tree';
 import { rangeHtml } from '../src/highlight';
-import { diffJson, OP_ADD, OP_DEL, OP_SAME, type DiffResult } from '../src/diffcore';
+import { diffJson, diffAligned, OP_ADD, OP_DEL, OP_SAME, OP_MOD, type DiffResult } from '../src/diffcore';
 
 let passed = 0;
 function ok(name: string, fn: () => void): void {
@@ -248,51 +248,53 @@ ok('diff: empty vs populated', () => {
   assert.strictEqual(e.adds, 2);
 });
 
-ok('diff: seeded fuzz invariants', () => {
-  let seed = 0x1234abcd;
-  const rnd = (): number => {
-    seed ^= seed << 13;
-    seed ^= seed >>> 17;
-    seed ^= seed << 5;
-    return (seed >>> 0) / 4294967296;
-  };
-  const clone = structuredClone;
-  const mutate = (v: unknown): unknown => {
-    if (v !== null && typeof v === 'object') {
-      if (Array.isArray(v)) {
-        const r = rnd();
-        if (r < 0.33) return [...v, 'added'];
-        if (r < 0.66 && v.length > 0) return v.slice(0, -1);
-        const c = clone(v) as unknown[];
-        if (c.length > 0) c[(rnd() * c.length) | 0] = mutate(c[(rnd() * c.length) | 0]);
-        return c;
-      }
-      const o = clone(v) as Record<string, unknown>;
-      const ks = Object.keys(o);
+// shared seeded fuzz machinery (focus + aligned suites)
+let seed = 0x1234abcd;
+const rnd = (): number => {
+  seed ^= seed << 13;
+  seed ^= seed >>> 17;
+  seed ^= seed << 5;
+  return (seed >>> 0) / 4294967296;
+};
+const clone = structuredClone;
+const mutate = (v: unknown): unknown => {
+  if (v !== null && typeof v === 'object') {
+    if (Array.isArray(v)) {
       const r = rnd();
-      if (r < 0.25) o['newKey'] = 1;
-      else if (r < 0.5 && ks.length > 0) delete o[ks[0]];
-      else if (ks.length > 0) o[ks[(rnd() * ks.length) | 0]] = mutate(o[ks[(rnd() * ks.length) | 0]]);
-      else o['x'] = 1;
-      return o;
+      if (r < 0.33) return [...v, 'added'];
+      if (r < 0.66 && v.length > 0) return v.slice(0, -1);
+      const c = clone(v) as unknown[];
+      if (c.length > 0) c[(rnd() * c.length) | 0] = mutate(c[(rnd() * c.length) | 0]);
+      return c;
     }
-    return typeof v === 'string' ? v + '!' : 999;
-  };
-  const gen = (depth: number): unknown => {
+    const o = clone(v) as Record<string, unknown>;
+    const ks = Object.keys(o);
     const r = rnd();
-    if (depth > 3 || r < 0.35)
-      return r < 0.15 ? 's' + ((rnd() * 100) | 0) : (rnd() * 100) | 0;
-    if (r < 0.7) {
-      const o: Record<string, unknown> = {};
-      const n = 1 + ((rnd() * 4) | 0);
-      for (let i = 0; i < n; i++) o['k' + i] = gen(depth + 1);
-      return o;
-    }
-    const a: unknown[] = [];
+    if (r < 0.25) o['newKey'] = 1;
+    else if (r < 0.5 && ks.length > 0) delete o[ks[0]];
+    else if (ks.length > 0) o[ks[(rnd() * ks.length) | 0]] = mutate(o[ks[(rnd() * ks.length) | 0]]);
+    else o['x'] = 1;
+    return o;
+  }
+  return typeof v === 'string' ? v + '!' : 999;
+};
+const gen = (depth: number): unknown => {
+  const r = rnd();
+  if (depth > 3 || r < 0.35)
+    return r < 0.15 ? 's' + ((rnd() * 100) | 0) : (rnd() * 100) | 0;
+  if (r < 0.7) {
+    const o: Record<string, unknown> = {};
     const n = 1 + ((rnd() * 4) | 0);
-    for (let i = 0; i < n; i++) a.push(gen(depth + 1));
-    return a;
-  };
+    for (let i = 0; i < n; i++) o['k' + i] = gen(depth + 1);
+    return o;
+  }
+  const a: unknown[] = [];
+  const n = 1 + ((rnd() * 4) | 0);
+  for (let i = 0; i < n; i++) a.push(gen(depth + 1));
+  return a;
+};
+
+ok('diff: seeded fuzz invariants', () => {
   for (let it = 0; it < 200; it++) {
     const a = gen(0);
     const bSame = structuredClone(a);
@@ -311,6 +313,104 @@ ok('diff: seeded fuzz invariants', () => {
       );
       if (k !== 0) assert.ok(d.meta[r] >= 0);
     }
+  }
+});
+
+// ---------- aligned / side-by-side ----------
+function countNodes(v: unknown): number {
+  if (v === null || typeof v !== 'object') return 1;
+  let c = 1;
+  for (const k of Array.isArray(v) ? v : Object.values(v)) c += countNodes(k);
+  return c;
+}
+
+ok('aligned: identical docs → all-SAME mirrored pairs', () => {
+  const v = { a: 1, b: [1, { c: 'x' }], n: null };
+  const d = diffAligned(v, structuredClone(v));
+  assert.strictEqual(d.rowCount, countNodes(v));
+  for (let i = 0; i < d.rowCount; i++) {
+    assert.strictEqual(d.op[i], OP_SAME, `op @${i}`);
+    assert.ok(d.lRow[i] >= 0 && d.rRow[i] >= 0, `rows @${i}`);
+  }
+});
+
+ok('aligned: leaf change → leaf MOD pair with both previews', () => {
+  const d = diffAligned({ a: 1, b: 'old' }, { a: 1, b: 'new' });
+  let mi = -1;
+  let mods = 0;
+  for (let i = 0; i < d.rowCount; i++) {
+    if (
+      d.op[i] === OP_MOD &&
+      d.lKind[d.lRow[i]] === 0 &&
+      d.rKind[d.rRow[i]] === 0
+    ) {
+      mods++;
+      mi = i;
+    }
+  }
+  assert.strictEqual(mods, 1); // exactly one changed leaf; ancestors are MOD too but are branches
+  assert.ok(mi >= 0);
+  assert.strictEqual(d.lVals[d.lVal[d.lRow[mi]]], '"old"');
+  assert.strictEqual(d.rVals[d.rVal[d.rRow[mi]]], '"new"');
+});
+
+ok('aligned: removed subtree → DEL run with empty right cells', () => {
+  const d = diffAligned({ keep: 1, gone: { deep: 2 } }, { keep: 1 });
+  let dels = 0;
+  let adds = 0;
+  for (let i = 0; i < d.rowCount; i++) {
+    if (d.op[i] === OP_DEL) {
+      dels++;
+      assert.ok(d.lRow[i] >= 0 && d.rRow[i] < 0, `del cell @${i}`);
+    }
+    if (d.op[i] === OP_ADD) adds++;
+  }
+  assert.strictEqual(dels, 2); // gone + deep
+  assert.strictEqual(adds, 0);
+});
+
+ok('aligned: added array element → ADD pair only', () => {
+  const d = diffAligned([1, 2, 3], [1, 9, 2, 3]);
+  let adds = 0;
+  for (let i = 0; i < d.rowCount; i++) if (d.op[i] === OP_ADD) adds++;
+  assert.strictEqual(adds, 1);
+  // prefix/suffix mirrored
+  assert.strictEqual(d.rowCount, countNodes([1, 2, 3]) + 1);
+});
+
+ok('aligned: type swap → DEL run + ADD run at same key', () => {
+  const d = diffAligned({ v: { a: 1 } }, { v: [1] });
+  let sawDelObj = false;
+  let sawAddArr = false;
+  for (let i = 0; i < d.rowCount; i++) {
+    if (d.op[i] === OP_DEL && d.lKind[d.lRow[i]] === 1) sawDelObj = true;
+    if (d.op[i] === OP_ADD && d.rKind[d.rRow[i]] === 2) sawAddArr = true;
+  }
+  assert.ok(sawDelObj && sawAddArr);
+});
+
+ok('aligned: seeded fuzz pair invariants', () => {
+  for (let it = 0; it < 200; it++) {
+    const x = gen(0);
+    // identical case
+    const same = diffAligned(x, structuredClone(x));
+    assert.strictEqual(same.rowCount, countNodes(x), `identical @${it}`);
+    const y = mutate(structuredClone(x));
+    const d = diffAligned(x, y);
+    for (let r = 0; r < d.rowCount; r++) {
+      const o = d.op[r];
+      const l = d.lRow[r];
+      const rr = d.rRow[r];
+      if (o === OP_SAME) assert.ok(l >= 0 && rr >= 0, `same @${it}:${r}`);
+      else if (o === OP_MOD) assert.ok(l >= 0 && rr >= 0, `mod @${it}:${r}`);
+      else if (o === OP_DEL) assert.ok(l >= 0 && rr < 0, `del @${it}:${r}`);
+      else if (o === OP_ADD) assert.ok(rr >= 0 && l < 0, `add @${it}:${r}`);
+      else assert.fail(`bad op ${o} @${it}:${r}`);
+    }
+    // at least one non-SAME pair when inputs differ
+    let nonSame = 0;
+    for (let r = 0; r < d.rowCount; r++) if (d.op[r] !== OP_SAME) nonSame++;
+    assert.ok(nonSame >= 1, `changed @${it}`);
   }
 });
 
