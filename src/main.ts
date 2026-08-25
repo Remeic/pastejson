@@ -112,16 +112,24 @@ function fmtStatus(ms: number): void {
 }
 
 // ---------- diff (lazy island orchestration) ----------
+const viewTag = $('view-tag');
+
 function syncSeg(name: ViewName): void {
   toolbar.querySelectorAll('.seg button').forEach((b) => {
     const el = b as HTMLElement;
     const isDiff = el.dataset.view === 'diff';
-    el.classList.toggle('on', el.dataset.view === name);
+    const active = el.dataset.view === name;
+    el.classList.toggle('on', active);
+    el.setAttribute('aria-selected', active ? 'true' : 'false');
     // single-doc views mislead inside diff mode — disabled while active
     const disable = name === 'diff' && !isDiff;
     el.toggleAttribute('disabled', disable);
   });
-  $<HTMLSelectElement>('sel-indent').disabled = name === 'diff';
+  // minified has no indentation — the select is meaningless there
+  $<HTMLSelectElement>('sel-indent').disabled = name === 'diff' || name === 'min';
+  // persistent "where am I" evidence, independent of button styling
+  viewTag.textContent = name;
+  viewTag.hidden = false;
 }
 
 function showDiffPanel(): void {
@@ -294,6 +302,7 @@ function ensureWorker(): Worker {
         void copyText(vm.min);
       }
       if (mode === 'loaded' && curView === 'min') {
+        statusbar.textContent = ''; // clear 'preparing minified…'
         mountScroller('min', -1); // now with real row count + tokens
       }
       return;
@@ -583,8 +592,17 @@ toolbar.addEventListener('click', (e) => {
     return;
   }
   if (v && v !== curView) {
+    // leaving a view with a lazy build in flight → abort it: bumping reqId
+    // makes the stale reply drop on arrival (worker has no message-level cancel)
+    if ((curView === 'min' && vm && vm.min === null) || (curView === 'tree' && ft === null)) {
+      reqId++;
+      wantCopyMin = false;
+    }
     curView = v;
     syncSeg(v);
+    // clear view-scoped chips ('preparing minified…', 'building tree…') —
+    // they are write-only otherwise and outlive their view
+    statusbar.textContent = '';
     // preserve scroll position across views by visual fraction
     const frac = scroller ? scroller.host.scrollTop / Math.max(1, scroller.host.scrollHeight) : 0;
     mountScroller(v, -1);
@@ -668,6 +686,7 @@ function resetToLanding(): void {
   visibleRows = null;
   diffRes = null;
   alignedRes = null;
+  viewTag.hidden = true;
   lastBVal = null;
   curView = 'text';
   closeDiffPanel();

@@ -51,11 +51,12 @@
     <div id="toolbar" hidden>
       <button id="btn-new" title="Clear (Esc)">＋ New</button>
       <div class="seg" role="tablist" aria-label="View">
-        <button data-view="text" class="on">Text</button>
-        <button data-view="tree">Tree</button>
-        <button data-view="min">Minified</button>
-        <button data-view="diff">Diff</button>
+        <button data-view="text" role="tab" class="on" aria-selected="true">Text</button>
+        <button data-view="tree" role="tab" aria-selected="false">Tree</button>
+        <button data-view="min" role="tab" aria-selected="false">Minified</button>
+        <button data-view="diff" role="tab" aria-selected="false">Diff</button>
       </div>
+      <span id="view-tag" hidden aria-live="polite"></span>
       <label class="indent-label">indent
         <select id="sel-indent" aria-label="Indent size">
           <option value="2" selected>2</option>
