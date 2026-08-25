@@ -3,7 +3,7 @@
 // Run: bun tests/fuzz.ts
 import assert from 'node:assert';
 import { emitJson, materializeLabels } from '../src/serialize';
-import { tokenize } from '../src/tokenizer';
+import { tokenize, T_PUNCT } from '../src/tokenizer';
 import { buildVisible } from '../src/tree';
 
 // deterministic xorshift
@@ -68,8 +68,13 @@ for (let it = 0; it < 500; it++) {
   const r = emitJson(v, ind, 1000);
   const expected = JSON.stringify(v, null, ind);
   assert.strictEqual(r.pretty, expected, `pretty mismatch @${it}`);
+  // punct tokens dropped by design (rendered via base code color)
   const toks = tokenize(r.pretty);
-  assert.deepStrictEqual([...r.tokens], [...toks], `tokens mismatch @${it}`);
+  const ref: number[] = [];
+  for (let i = 0; i < toks.length; i += 2) {
+    if (toks[i + 1] !== T_PUNCT) ref.push(toks[i], toks[i + 1]);
+  }
+  assert.deepStrictEqual([...r.tokens], ref, `tokens mismatch @${it}`);
   assert.strictEqual(r.tree.rowCount, countNodes(v), `rowCount mismatch @${it}`);
   assert.strictEqual(r.lines, r.lineStarts.length, `lines mismatch @${it}`);
   const vis = buildVisible(r.tree, new Uint8Array(r.tree.rowCount).fill(1));
