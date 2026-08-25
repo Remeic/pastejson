@@ -14,6 +14,7 @@ import {
 } from './render';
 import { esc } from './highlight';
 import PJWorker from './worker?worker&inline';
+import type { AlignedResult, DiffResult } from './diffview';
 
 const ROW_H = 20;
 const WORKER_THRESHOLD = 256 * 1024;
@@ -34,7 +35,7 @@ const toastEl = $('toast');
 const dropOverlay = $('drop-overlay');
 
 // ---------- state ----------
-type ViewName = 'text' | 'tree' | 'min';
+type ViewName = 'text' | 'tree' | 'min' | 'diff';
 type Mode = 'landing' | 'working' | 'error' | 'loaded';
 
 let vm: ViewModel | null = null;
@@ -50,6 +51,19 @@ let lastRaw = '';
 let bytesIn = 0;
 let wantCopyMin = false;
 let scroller: VScroll | null = null;
+
+// diff island state (module code loads lazily; see openDiff)
+let diffMod: typeof import('./diffview') | null = null;
+let diffRes: DiffResult | null = null;
+let alignedRes: AlignedResult | null = null;
+let lastDiffRaw = '';
+let lastBVal: unknown = null;
+let diffSbs = false; // false = changes-only focus, true = side-by-side
+let panelOpen = false;
+const diffTa = $<HTMLTextAreaElement>('diff-in');
+const diffPanel = $('diffpanel');
+const dpStatus = $('dp-status');
+const dpMsg = $('dp-msg');
 
 // ---------- char width probe (for h-scroll width estimate) ----------
 let charW = 7.8;
@@ -89,6 +103,116 @@ function fmtStatus(ms: number): void {
     ms > 0 ? `${Math.round(ms)} ms` : '',
   ];
   statusbar.textContent = parts.filter(Boolean).join('  ·  ');
+}
+
+// ---------- diff (lazy island orchestration) ----------
+function syncSeg(name: ViewName): void {
+  toolbar.querySelectorAll('.seg button').forEach((b) => {
+    const el = b as HTMLElement;
+    const isDiff = el.dataset.view === 'diff';
+    el.classList.toggle('on', el.dataset.view === name);
+    // single-doc views mislead inside diff mode — disabled while active
+    const disable = name === 'diff' && !isDiff;
+    el.toggleAttribute('disabled', disable);
+  });
+  $<HTMLSelectElement>('sel-indent').disabled = name === 'diff';
+}
+
+function showDiffPanel(): void {
+  panelOpen = true;
+  diffPanel.hidden = false;
+  dpMsg.textContent = '';
+  if (!diffRes) dpStatus.textContent = lastDiffRaw ? 'ready — press Diff' : 'paste JSON B';
+  requestAnimationFrame(() => diffTa.focus());
+}
+
+function closeDiffPanel(): void {
+  panelOpen = false;
+  diffPanel.hidden = true;
+}
+
+function syncModeBtns(): void {
+  $('btn-dp-focus').classList.toggle('on', !diffSbs);
+  $('btn-dp-sbs').classList.toggle('on', diffSbs);
+}
+
+async function ensureDiffMod(): Promise<typeof import('./diffview')> {
+  if (!diffMod) diffMod = await import('./diffview');
+  return diffMod;
+}
+
+// left side: parsed small-path value, else (big path) re-parse pretty —
+// JSON.parse is the native floor; explicit user action only.
+function getLeftValue(): unknown {
+  if (parsedValue !== null) return parsedValue;
+  if (vm && vm.source !== null) return vm.source;
+  return JSON.parse(vm!.pretty);
+}
+
+async function runDiff(rawB: string): Promise<void> {
+  const mod = await ensureDiffMod();
+  const rb = parseInput(rawB);
+  if (rb.kind === 'error') {
+    dpMsg.innerHTML = `<b>Invalid JSON B</b> — ${esc(rb.message)}`;
+    return;
+  }
+  statusbar.textContent = 'diffing…';
+  dpStatus.textContent = '…';
+  await new Promise((r) => setTimeout(r, 0)); // let the chip paint first
+  const t0 = performance.now();
+  const left = getLeftValue();
+  const res = mod.diffJson(left, rb.value);
+  diffRes = res;
+  lastBVal = rb.value;
+  alignedRes = diffSbs ? mod.diffAligned(left, lastBVal) : null;
+  curView = 'diff';
+  syncSeg('diff');
+  mountScroller('diff', -1);
+  const ms = Math.round(performance.now() - t0);
+  const summary = `${mod.diffSummary(res)} · ${ms} ms${diffSbs ? ' · side by side' : ''}`;
+  dpStatus.textContent = summary;
+  statusbar.textContent = summary;
+}
+
+// toggle Changes ↔ Side-by-side; aligned build is lazy + cached per inputs
+async function setDiffMode(sbs: boolean): Promise<void> {
+  if (diffSbs === sbs) return;
+  diffSbs = sbs;
+  syncModeBtns();
+  if (!vm || curView !== 'diff' || !diffRes || lastBVal === null) return;
+  if (sbs && !alignedRes) {
+    const mod = await ensureDiffMod();
+    statusbar.textContent = 'building side-by-side…';
+    dpStatus.textContent = '…';
+    await new Promise((r) => setTimeout(r, 0));
+    const t0 = performance.now();
+    alignedRes = mod.diffAligned(getLeftValue(), lastBVal);
+    const note = `side-by-side built in ${Math.round(performance.now() - t0)} ms`;
+    dpStatus.textContent = note;
+    statusbar.textContent = note;
+  } else {
+    // back to focus — restore the diff summary, drop stale build notes
+    const note = diffRes ? diffMod!.diffSummary(diffRes) : '';
+    dpStatus.textContent = diffRes ? `${note} · changes` : '';
+    statusbar.textContent = note;
+  }
+  mountScroller('diff', -1);
+}
+
+async function openDiff(): Promise<void> {
+  if (mode !== 'loaded' || !vm) return;
+  if (!panelOpen) showDiffPanel();
+  if (lastDiffRaw && curView !== 'diff') return void runDiff(lastDiffRaw);
+  requestAnimationFrame(() => diffTa.focus());
+}
+
+// leave diff mode → back to the base document (Text)
+function exitDiff(): void {
+  if (curView !== 'diff') return;
+  curView = 'text';
+  syncSeg('text');
+  mountScroller('text', 0);
+  statusbar.textContent = '';
 }
 
 // ---------- worker ----------
@@ -197,6 +321,14 @@ function load(raw: string): void {
   bytesIn = raw.length;
   errbanner.hidden = true;
   rawprev.hidden = true;
+  diffRes = null; // new doc invalidates any diff
+  alignedRes = null;
+  lastBVal = null;
+  if (panelOpen) dpStatus.textContent = 'doc changed — press Diff';
+  if (curView === 'diff') {
+    curView = 'text';
+    syncSeg('text');
+  }
 
   if (raw.length > WORKER_THRESHOLD) {
     setMode('working');
@@ -285,6 +417,23 @@ function mountScroller(v: ViewName, anchorTopVisual: number): void {
       scroller.setWidth(minStr.length * charW + 72);
       scroller.setRowCount(minRowCount(vm!));
     }
+  } else if (v === 'diff') {
+    const mod = diffMod!;
+    const sbs = diffSbs && alignedRes !== null;
+    scroller = new VScroll(viewEl, {
+      rowH: ROW_H,
+      overscan: OVERSCAN,
+      paint: (a, b) =>
+        sbs ? mod.sbsHtml(alignedRes!, a, b) : mod.diffHtml(diffRes!, a, b),
+    });
+    if (sbs || !diffRes) {
+      scroller.setWidth(0); // flex columns — full width
+    } else {
+      const est = Math.min(20000, diffRes.maxChars * charW + 72);
+      // tint bars span at least the viewport — no mid-screen cutoff on small docs
+      scroller.setWidth(Math.max(viewEl.clientWidth || 0, est, 600));
+    }
+    scroller.setRowCount(sbs ? alignedRes!.rowCount : (diffRes?.rowCount ?? 0));
   } else {
     if (!ft) {
       if (vm?.tree) {
@@ -323,6 +472,10 @@ function mountScroller(v: ViewName, anchorTopVisual: number): void {
 function enterView(ms: number): void {
   rawprev.hidden = true;
   ft = null; // rebuilt lazily on first tree mount (or reused if same doc+view switch)
+  if (curView === 'diff') {
+    curView = 'text'; // doc changed (worker path) — diff is stale
+    syncSeg('text');
+  }
   mountScroller(curView, 0);
   fmtStatus(ms);
 }
@@ -331,6 +484,16 @@ function enterView(ms: number): void {
 
 // paste anywhere on the page
 document.addEventListener('paste', (e: ClipboardEvent) => {
+  if (panelOpen) {
+    // paste while the diff panel is open = JSON B — auto-run, product is speed
+    const tb = e.clipboardData?.getData('text/plain');
+    if (!tb) return;
+    e.preventDefault();
+    diffTa.value = tb;
+    lastDiffRaw = tb;
+    void runDiff(tb);
+    return;
+  }
   if (document.activeElement === inTa) return; // native path via input event
   const t = e.clipboardData?.getData('text/plain');
   if (!t) return;
@@ -403,9 +566,15 @@ toolbar.addEventListener('click', (e) => {
     return;
   }
   const v = el.dataset.view as ViewName | undefined;
+  if (v === 'diff') {
+    // seg is a mode toggle: click again = leave diff, back to Text
+    if (curView === 'diff') exitDiff();
+    else void openDiff();
+    return;
+  }
   if (v && v !== curView) {
     curView = v;
-    toolbar.querySelectorAll('.seg button').forEach((b) => b.classList.toggle('on', b === el));
+    syncSeg(v);
     // preserve scroll position across views by visual fraction
     const frac = scroller ? scroller.host.scrollTop / Math.max(1, scroller.host.scrollHeight) : 0;
     mountScroller(v, -1);
@@ -448,6 +617,14 @@ $<HTMLSelectElement>('sel-indent').addEventListener('change', (e) => {
     const t0 = performance.now();
     vm = buildView(parsedValue, indent, bytesIn);
     ft = null;
+    diffRes = null; // pretty changed — any diff is stale
+    alignedRes = null;
+    lastBVal = null;
+    if (panelOpen) dpStatus.textContent = 'stale — press Diff';
+    if (curView === 'diff') {
+      curView = 'text';
+      syncSeg('text');
+    }
     mountScroller(curView, 0);
     fmtStatus(performance.now() - t0);
   } else {
@@ -479,6 +656,11 @@ function resetToLanding(): void {
   parsedValue = null;
   expanded = null;
   visibleRows = null;
+  diffRes = null;
+  alignedRes = null;
+  lastBVal = null;
+  curView = 'text';
+  closeDiffPanel();
   scroller?.destroy();
   scroller = null;
   viewEl.innerHTML = '';
@@ -492,10 +674,39 @@ function resetToLanding(): void {
   requestAnimationFrame(() => inTa.focus());
 }
 
-// Esc = clear
+// Esc = close diff panel, else leave diff, else clear
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && mode !== 'landing') resetToLanding();
+  if (e.key !== 'Escape') return;
+  if (panelOpen) return closeDiffPanel();
+  if (curView === 'diff') return exitDiff();
+  if (mode !== 'landing') resetToLanding();
 });
+
+// diff panel controls
+diffTa.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+    e.preventDefault();
+    lastDiffRaw = diffTa.value.trim();
+    if (!lastDiffRaw) return;
+    void runDiff(lastDiffRaw);
+  }
+});
+$('btn-diff-run').addEventListener('click', () => {
+  lastDiffRaw = diffTa.value.trim();
+  if (!lastDiffRaw) return;
+  void runDiff(lastDiffRaw);
+});
+$('btn-diff-cancel').addEventListener('click', () => {
+  diffTa.value = '';
+  lastDiffRaw = '';
+  lastBVal = null;
+  diffRes = null;
+  alignedRes = null;
+  dpStatus.textContent = 'paste JSON B';
+});
+$('btn-dp-close').addEventListener('click', closeDiffPanel);
+$('btn-dp-focus').addEventListener('click', () => void setDiffMode(false));
+$('btn-dp-sbs').addEventListener('click', () => void setDiffMode(true));
 
 // ---------- clipboard auto-load (best effort, zero main-thread cost) ----------
 // Browser reality:

@@ -3,6 +3,8 @@
   :root {
     --err: #ef5350;
     --mark: #33415c;
+    --add: #56d364;
+    --del: #f85149;
     --tk: #82aaff;
     --ts: #ecc48d;
     --tn: #f78c6c;
@@ -15,6 +17,8 @@
   :root {
     --err: #cf222e;
     --mark: #fff8c5;
+    --add: #1a7f37;
+    --del: #cf222e;
     --tk: #0550ae;
     --ts: #116329;
     --tn: #953800;
@@ -59,6 +63,10 @@ body[data-mode=loaded] #in { display: none; }
   padding: 6px 12px; cursor: pointer; touch-action: manipulation;
 }
 #toolbar button:hover { border-color: var(--accent); }
+#toolbar button:disabled, #toolbar select:disabled {
+  opacity: 0.4; cursor: not-allowed;
+}
+#toolbar button:disabled:hover { border-color: var(--line); }
 .seg { display: flex; gap: 4px; }
 .on { background: var(--accent); border-color: var(--accent); color: var(--bg); }
 .indent-label {
@@ -81,7 +89,8 @@ body[data-mode=loaded] #in { display: none; }
 
 /* viewer */
 #out { display: flex; flex-direction: column; }
-#out, #view { flex: 1; min-height: 0; }
+#out, #view { flex: 1; min-height: 0; min-width: 0; }
+#view { width: 100%; }
 
 .vscroll {
   position: relative; overflow: auto; height: 100%;
@@ -143,6 +152,80 @@ i { font-style: normal; }
   transition: transform 150ms ease; z-index: 90;
 }
 #toast.show { transform: translate(-50%); }
+
+/* diff island (styles are tiny; module code loads via dynamic import) */
+.dg {
+  flex: none; width: 20px; text-align: center;
+  color: var(--tp); user-select: none; font-size: 11px;
+}
+.d-add { background: color-mix(in srgb, var(--add) 10%, transparent); }
+.d-del { background: color-mix(in srgb, var(--del) 10%, transparent); }
+.d-add .dg { color: var(--add); }
+.d-del .dg { color: var(--del); }
+
+/* side-by-side */
+.sb .sc {
+  flex: 1 1 50%; min-width: 0; overflow: hidden;
+  display: flex; align-items: center;
+}
+.sb .sc + .sc { border-left: 1px solid var(--line); }
+.sb code { overflow: hidden; white-space: pre; }
+.sb.d-mod .sl { background: color-mix(in srgb, var(--del) 8%, transparent); }
+.sb.d-mod .sr { background: color-mix(in srgb, var(--add) 8%, transparent); }
+
+/* layout row: viewer + docked diff panel */
+#mainrow { display: flex; flex: 1; min-height: 0; min-width: 0; width: 100%; overflow: hidden; }
+#diffpanel {
+  flex: none; width: 340px; min-height: 0; overflow: hidden;
+  display: flex; flex-direction: column; gap: 10px; padding: 14px;
+  border-left: 1px solid var(--line); background: var(--panel);
+}
+#dp-head {
+  display: flex; align-items: center; gap: 10px;
+  font-family: var(--mono); font-size: 13px;
+}
+#dp-head b { color: var(--accent); }
+#dp-status { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#btn-dp-close {
+  margin-left: auto; flex: none; padding: 2px 9px; font-family: var(--mono);
+  background: transparent; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 6px; cursor: pointer;
+}
+#btn-dp-close:hover { color: var(--fg); border-color: var(--accent); }
+.dp-modes button {
+  flex: 1; font-family: var(--mono); font-size: 12px; padding: 5px 4px;
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--line); cursor: pointer;
+}
+.dp-modes button:first-child { border-radius: 7px 0 0 7px; }
+.dp-modes button:last-child { border-radius: 0 7px 7px 0; }
+.dp-modes button.on { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+#dp-msg { font-family: var(--mono); font-size: 12px; color: var(--err); overflow-wrap: anywhere; }
+#diff-in {
+  flex: 1 1 0; min-height: 48px;
+  font-family: var(--mono); font-size: 13px; line-height: 20px; tab-size: 2;
+  color: inherit; background: var(--bg); border: 1px solid var(--line);
+  border-radius: 8px; padding: 10px 12px;
+  resize: none; outline: none; white-space: pre; overflow: auto;
+}
+#diff-in:focus { border-color: var(--accent); }
+.muted { color: var(--muted); }
+.hint-key { margin-right: auto; font-size: 11px; font-family: var(--mono); }
+#dp-actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; }
+#dp-actions button {
+  font-family: var(--mono); font-size: 12px; padding: 7px 14px;
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 7px; cursor: pointer;
+}
+#btn-diff-run { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
+
+@media (max-width: 720px) {
+  #diffpanel {
+    position: fixed; top: 0; right: 0; bottom: 0; z-index: 60;
+    width: min(88vw, 360px); box-shadow: -8px 0 24px rgb(0 0 0 / 0.35);
+  }
+}
+
 #drop-overlay {
   position: fixed; inset: 10px; border: 2px dashed var(--accent); border-radius: 14px;
   background: color-mix(in srgb, var(--accent) 7%, var(--bg)); color: var(--accent);
