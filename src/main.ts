@@ -108,8 +108,14 @@ function fmtStatus(ms: number): void {
 // ---------- diff (lazy island orchestration) ----------
 function syncSeg(name: ViewName): void {
   toolbar.querySelectorAll('.seg button').forEach((b) => {
-    b.classList.toggle('on', (b as HTMLElement).dataset.view === name);
+    const el = b as HTMLElement;
+    const isDiff = el.dataset.view === 'diff';
+    el.classList.toggle('on', el.dataset.view === name);
+    // single-doc views mislead inside diff mode — disabled while active
+    const disable = name === 'diff' && !isDiff;
+    el.toggleAttribute('disabled', disable);
   });
+  $<HTMLSelectElement>('sel-indent').disabled = name === 'diff';
 }
 
 function showDiffPanel(): void {
@@ -184,6 +190,11 @@ async function setDiffMode(sbs: boolean): Promise<void> {
     const note = `side-by-side built in ${Math.round(performance.now() - t0)} ms`;
     dpStatus.textContent = note;
     statusbar.textContent = note;
+  } else {
+    // back to focus — restore the diff summary, drop stale build notes
+    const note = diffRes ? diffMod!.diffSummary(diffRes) : '';
+    dpStatus.textContent = diffRes ? `${note} · changes` : '';
+    statusbar.textContent = note;
   }
   mountScroller('diff', -1);
 }
@@ -193,6 +204,15 @@ async function openDiff(): Promise<void> {
   if (!panelOpen) showDiffPanel();
   if (lastDiffRaw && curView !== 'diff') return void runDiff(lastDiffRaw);
   requestAnimationFrame(() => diffTa.focus());
+}
+
+// leave diff mode → back to the base document (Text)
+function exitDiff(): void {
+  if (curView !== 'diff') return;
+  curView = 'text';
+  syncSeg('text');
+  mountScroller('text', 0);
+  statusbar.textContent = '';
 }
 
 // ---------- worker ----------
@@ -409,7 +429,9 @@ function mountScroller(v: ViewName, anchorTopVisual: number): void {
     if (sbs || !diffRes) {
       scroller.setWidth(0); // flex columns — full width
     } else {
-      scroller.setWidth(Math.max(600, Math.min(20000, diffRes.maxChars * charW + 72)));
+      const est = Math.min(20000, diffRes.maxChars * charW + 72);
+      // tint bars span at least the viewport — no mid-screen cutoff on small docs
+      scroller.setWidth(Math.max(viewEl.clientWidth || 0, est, 600));
     }
     scroller.setRowCount(sbs ? alignedRes!.rowCount : (diffRes?.rowCount ?? 0));
   } else {
@@ -545,7 +567,9 @@ toolbar.addEventListener('click', (e) => {
   }
   const v = el.dataset.view as ViewName | undefined;
   if (v === 'diff') {
-    void openDiff();
+    // seg is a mode toggle: click again = leave diff, back to Text
+    if (curView === 'diff') exitDiff();
+    else void openDiff();
     return;
   }
   if (v && v !== curView) {
@@ -650,10 +674,11 @@ function resetToLanding(): void {
   requestAnimationFrame(() => inTa.focus());
 }
 
-// Esc = close diff panel first, else clear
+// Esc = close diff panel, else leave diff, else clear
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (panelOpen) return closeDiffPanel();
+  if (curView === 'diff') return exitDiff();
   if (mode !== 'landing') resetToLanding();
 });
 

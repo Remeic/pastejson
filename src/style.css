@@ -63,6 +63,10 @@ body[data-mode=loaded] #in { display: none; }
   padding: 6px 12px; cursor: pointer; touch-action: manipulation;
 }
 #toolbar button:hover { border-color: var(--accent); }
+#toolbar button:disabled, #toolbar select:disabled {
+  opacity: 0.4; cursor: not-allowed;
+}
+#toolbar button:disabled:hover { border-color: var(--line); }
 .seg { display: flex; gap: 4px; }
 .on { background: var(--accent); border-color: var(--accent); color: var(--bg); }
 .indent-label {
@@ -170,9 +174,9 @@ i { font-style: normal; }
 .sb.d-mod .sr { background: color-mix(in srgb, var(--add) 8%, transparent); }
 
 /* layout row: viewer + docked diff panel */
-#mainrow { display: flex; flex: 1; min-height: 0; min-width: 0; width: 100%; }
+#mainrow { display: flex; flex: 1; min-height: 0; min-width: 0; width: 100%; overflow: hidden; }
 #diffpanel {
-  flex: none; width: 340px; min-height: 0;
+  flex: none; width: 340px; min-height: 0; overflow: hidden;
   display: flex; flex-direction: column; gap: 10px; padding: 14px;
   border-left: 1px solid var(--line); background: var(--panel);
 }
@@ -198,7 +202,7 @@ i { font-style: normal; }
 .dp-modes button.on { background: var(--accent); border-color: var(--accent); color: var(--bg); }
 #dp-msg { font-family: var(--mono); font-size: 12px; color: var(--err); overflow-wrap: anywhere; }
 #diff-in {
-  flex: 1; min-height: 120px;
+  flex: 1 1 0; min-height: 48px;
   font-family: var(--mono); font-size: 13px; line-height: 20px; tab-size: 2;
   color: inherit; background: var(--bg); border: 1px solid var(--line);
   border-radius: 8px; padding: 10px 12px;
