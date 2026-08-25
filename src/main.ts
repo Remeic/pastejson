@@ -473,6 +473,7 @@ async function copyText(s: string): Promise<void> {
 }
 
 function resetToLanding(): void {
+  clipHint(false);
   reqId++;
   vm = null;
   ft = null;
@@ -509,6 +510,8 @@ document.addEventListener('keydown', (e) => {
 const CLIPBOARD_CAP = 8 * 1024 * 1024; // 8MB guard
 let clipLoaded = false;
 let clipPending = false;
+let clipNeedsGesture = false; // silent load attempt failed → guide the user
+let clipIrrelevant = false;   // clipboard read fine but no JSON inside
 
 // cheap leading-char probe before paying for a parse
 function looksLikeJson(t: string): boolean {
@@ -527,21 +530,40 @@ function looksLikeJson(t: string): boolean {
   );
 }
 
+function clipHint(show: boolean): void {
+  const el = document.getElementById('clip-hint');
+  if (el) el.hidden = !show;
+}
+
 async function tryClipboardAuto(): Promise<void> {
-  if (clipLoaded || clipPending || mode !== 'landing') return;
+  if (clipLoaded || clipIrrelevant || clipPending || mode !== 'landing') return;
   const read = navigator.clipboard?.readText;
   if (!read) return; // no API (old browser) — Ctrl+V hint covers it
   clipPending = true;
   try {
     const t = await read.call(navigator.clipboard);
-    if (!t || t.length > CLIPBOARD_CAP || !looksLikeJson(t)) return;
+    if (!t || t.length > CLIPBOARD_CAP) {
+      clipIrrelevant = true;
+      clipHint(false);
+      return;
+    }
+    if (!looksLikeJson(t)) {
+      // readable but no JSON — stop nagging, clipboard holds something else
+      clipIrrelevant = true;
+      clipHint(false);
+      return;
+    }
     if (mode !== 'landing') return; // user acted first — never race them
     clipLoaded = true;
+    clipHint(false);
     inTa.value = t;
     load(t);
     toast('Loaded from clipboard');
   } catch {
-    /* denied / dismissed — retried on next activation */
+    // denied / needs gesture (Firefox doorhanger, Safari paste button) —
+    // guide the user: any click re-triggers the read
+    clipNeedsGesture = true;
+    clipHint(true);
   } finally {
     clipPending = false;
   }
@@ -549,6 +571,10 @@ async function tryClipboardAuto(): Promise<void> {
 
 // after first paint, off the critical path (works when permission granted)
 requestAnimationFrame(() => setTimeout(() => void tryClipboardAuto(), 0));
+// if the silent attempt needed a gesture, reveal the guide immediately
+setTimeout(() => {
+  if (clipNeedsGesture && mode === 'landing') clipHint(true);
+}, 600);
 
 // every user activation retries — Firefox/Safari need the gesture for their
 // paste prompt; once allowed, the permission persists for future visits

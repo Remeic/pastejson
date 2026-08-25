@@ -42,6 +42,14 @@
         background: color-mix(in srgb, var(--accent) 8%, var(--bg));
         padding: 5px 14px; border-radius: 999px; letter-spacing: 0.02em;
       }
+      .clip-hint {
+        margin: 0; font-family: var(--mono); font-size: 12px; color: var(--accent);
+        border: 1px dashed color-mix(in srgb, var(--accent) 45%, var(--line));
+        background: color-mix(in srgb, var(--accent) 7%, var(--bg));
+        padding: 7px 16px; border-radius: 999px;
+        animation: pulse 1.6s ease-in-out infinite;
+      }
+      @keyframes pulse { 50% { opacity: 0.5; } }
       [hidden] { display: none !important; }
     </style>
   </head>
@@ -74,6 +82,7 @@
       <p class="claim">⚡ the fastest JSON viewer — multi-MB files in milliseconds</p>
       <h1>Paste JSON.<br />See it formatted.</h1>
       <p class="hint"><kbd>⌘V</kbd> / <kbd>Ctrl+V</kbd> anywhere &nbsp;·&nbsp; or drop a .json file</p>
+      <p id="clip-hint" class="clip-hint" hidden>Click anywhere to load the JSON in your clipboard</p>
       <p class="sub">100% local — your data never leaves the browser</p>
     </section>
 
