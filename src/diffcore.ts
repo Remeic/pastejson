@@ -845,7 +845,7 @@ export function diffAligned(a: unknown, b: unknown): AlignedResult {
           ch = true;
         },
         // Myers "same" ⇒ stringify-equal ⇒ mirrored emission, zero compares
-        (i, j) => flatBoth(x[p + i], d, -1),
+        (i) => flatBoth(x[p + i], d, -1),
       )
     ) {
       pairwiseMid();
