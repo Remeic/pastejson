@@ -54,6 +54,7 @@
         <button data-view="text" class="on">Text</button>
         <button data-view="tree">Tree</button>
         <button data-view="min">Minified</button>
+        <button data-view="diff">Diff</button>
       </div>
       <label class="indent-label">indent
         <select id="sel-indent" aria-label="Indent size">
@@ -90,6 +91,25 @@
       <pre id="rawprev" hidden></pre>
       <div id="view"></div>
     </main>
+
+    <div id="diffbox" hidden>
+      <div id="diffbox-card">
+        <div id="diffbox-head">Diff — paste JSON <b>B</b> <span class="muted">(current doc is A)</span></div>
+        <textarea
+          id="diff-in"
+          spellcheck="false"
+          autocomplete="off"
+          autocapitalize="off"
+          aria-label="JSON B for diff"
+        ></textarea>
+        <div id="diffbox-msg" role="alert"></div>
+        <div id="diffbox-actions">
+          <span class="muted hint-key">⌘⏎ / Ctrl+Enter</span>
+          <button id="btn-diff-cancel">Cancel</button>
+          <button id="btn-diff-run" class="primary">Diff</button>
+        </div>
+      </div>
+    </div>
 
     <div id="toast" role="status"></div>
     <div id="drop-overlay" hidden>Drop JSON file…</div>

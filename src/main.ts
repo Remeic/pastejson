@@ -14,6 +14,7 @@ import {
 } from './render';
 import { esc } from './highlight';
 import PJWorker from './worker?worker&inline';
+import type { DiffResult } from './diffview';
 
 const ROW_H = 20;
 const WORKER_THRESHOLD = 256 * 1024;
@@ -34,7 +35,7 @@ const toastEl = $('toast');
 const dropOverlay = $('drop-overlay');
 
 // ---------- state ----------
-type ViewName = 'text' | 'tree' | 'min';
+type ViewName = 'text' | 'tree' | 'min' | 'diff';
 type Mode = 'landing' | 'working' | 'error' | 'loaded';
 
 let vm: ViewModel | null = null;
@@ -50,6 +51,15 @@ let lastRaw = '';
 let bytesIn = 0;
 let wantCopyMin = false;
 let scroller: VScroll | null = null;
+
+// diff island state (module code loads lazily; see openDiff)
+let diffMod: typeof import('./diffview') | null = null;
+let diffRes: DiffResult | null = null;
+let lastDiffRaw = '';
+let diffBoxOpen = false;
+const diffTa = $<HTMLTextAreaElement>('diff-in');
+const diffBox = $('diffbox');
+const diffMsg = $('diffbox-msg');
 
 // ---------- char width probe (for h-scroll width estimate) ----------
 let charW = 7.8;
@@ -89,6 +99,64 @@ function fmtStatus(ms: number): void {
     ms > 0 ? `${Math.round(ms)} ms` : '',
   ];
   statusbar.textContent = parts.filter(Boolean).join('  ·  ');
+}
+
+// ---------- diff (lazy island orchestration) ----------
+function syncSeg(name: ViewName): void {
+  toolbar.querySelectorAll('.seg button').forEach((b) => {
+    b.classList.toggle('on', (b as HTMLElement).dataset.view === name);
+  });
+}
+
+function showDiffBox(): void {
+  diffBoxOpen = true;
+  diffMsg.textContent = '';
+  diffTa.value = lastDiffRaw;
+  diffBox.hidden = false;
+  requestAnimationFrame(() => diffTa.focus());
+}
+
+function closeDiffBox(): void {
+  diffBoxOpen = false;
+  diffBox.hidden = true;
+}
+
+async function ensureDiffMod(): Promise<typeof import('./diffview')> {
+  if (!diffMod) diffMod = await import('./diffview');
+  return diffMod;
+}
+
+// left side: parsed small-path value, else (big path) re-parse pretty —
+// JSON.parse is the native floor; explicit user action only.
+function getLeftValue(): unknown {
+  if (parsedValue !== null) return parsedValue;
+  if (vm && vm.source !== null) return vm.source;
+  return JSON.parse(vm!.pretty);
+}
+
+async function runDiff(rawB: string): Promise<void> {
+  const mod = await ensureDiffMod();
+  const rb = parseInput(rawB);
+  if (rb.kind === 'error') {
+    diffMsg.innerHTML = `<b>Invalid JSON B</b> — ${esc(rb.message)}`;
+    return;
+  }
+  closeDiffBox();
+  statusbar.textContent = 'diffing…';
+  await new Promise((r) => setTimeout(r, 0)); // let the chip paint first
+  const t0 = performance.now();
+  const res = mod.diffJson(getLeftValue(), rb.value);
+  diffRes = res;
+  curView = 'diff';
+  syncSeg('diff');
+  mountScroller('diff', -1);
+  statusbar.textContent = `${mod.diffSummary(res)} · ${Math.round(performance.now() - t0)} ms`;
+}
+
+async function openDiff(): Promise<void> {
+  if (mode !== 'loaded' || !vm) return;
+  if (lastDiffRaw && curView !== 'diff') return void runDiff(lastDiffRaw);
+  showDiffBox(); // no B yet, or re-editing B
 }
 
 // ---------- worker ----------
@@ -197,6 +265,11 @@ function load(raw: string): void {
   bytesIn = raw.length;
   errbanner.hidden = true;
   rawprev.hidden = true;
+  diffRes = null; // new doc invalidates any diff
+  if (curView === 'diff') {
+    curView = 'text';
+    syncSeg('text');
+  }
 
   if (raw.length > WORKER_THRESHOLD) {
     setMode('working');
@@ -285,6 +358,16 @@ function mountScroller(v: ViewName, anchorTopVisual: number): void {
       scroller.setWidth(minStr.length * charW + 72);
       scroller.setRowCount(minRowCount(vm!));
     }
+  } else if (v === 'diff') {
+    const dr = diffRes!;
+    const mod = diffMod!;
+    scroller = new VScroll(viewEl, {
+      rowH: ROW_H,
+      overscan: OVERSCAN,
+      paint: (a, b) => mod.diffHtml(dr, a, b),
+    });
+    scroller.setWidth(Math.max(600, Math.min(20000, dr.maxChars * charW + 72)));
+    scroller.setRowCount(dr.rowCount);
   } else {
     if (!ft) {
       if (vm?.tree) {
@@ -323,6 +406,10 @@ function mountScroller(v: ViewName, anchorTopVisual: number): void {
 function enterView(ms: number): void {
   rawprev.hidden = true;
   ft = null; // rebuilt lazily on first tree mount (or reused if same doc+view switch)
+  if (curView === 'diff') {
+    curView = 'text'; // doc changed (worker path) — diff is stale
+    syncSeg('text');
+  }
   mountScroller(curView, 0);
   fmtStatus(ms);
 }
@@ -331,6 +418,16 @@ function enterView(ms: number): void {
 
 // paste anywhere on the page
 document.addEventListener('paste', (e: ClipboardEvent) => {
+  if (diffBoxOpen) {
+    // paste while the diff sheet is open = JSON B — auto-run, product is speed
+    const tb = e.clipboardData?.getData('text/plain');
+    if (!tb) return;
+    e.preventDefault();
+    diffTa.value = tb;
+    lastDiffRaw = tb;
+    void runDiff(tb);
+    return;
+  }
   if (document.activeElement === inTa) return; // native path via input event
   const t = e.clipboardData?.getData('text/plain');
   if (!t) return;
@@ -403,9 +500,13 @@ toolbar.addEventListener('click', (e) => {
     return;
   }
   const v = el.dataset.view as ViewName | undefined;
+  if (v === 'diff') {
+    void openDiff();
+    return;
+  }
   if (v && v !== curView) {
     curView = v;
-    toolbar.querySelectorAll('.seg button').forEach((b) => b.classList.toggle('on', b === el));
+    syncSeg(v);
     // preserve scroll position across views by visual fraction
     const frac = scroller ? scroller.host.scrollTop / Math.max(1, scroller.host.scrollHeight) : 0;
     mountScroller(v, -1);
@@ -448,6 +549,11 @@ $<HTMLSelectElement>('sel-indent').addEventListener('change', (e) => {
     const t0 = performance.now();
     vm = buildView(parsedValue, indent, bytesIn);
     ft = null;
+    diffRes = null; // pretty changed — any diff is stale
+    if (curView === 'diff') {
+      curView = 'text';
+      syncSeg('text');
+    }
     mountScroller(curView, 0);
     fmtStatus(performance.now() - t0);
   } else {
@@ -479,6 +585,9 @@ function resetToLanding(): void {
   parsedValue = null;
   expanded = null;
   visibleRows = null;
+  diffRes = null;
+  curView = 'text';
+  closeDiffBox();
   scroller?.destroy();
   scroller = null;
   viewEl.innerHTML = '';
@@ -492,10 +601,28 @@ function resetToLanding(): void {
   requestAnimationFrame(() => inTa.focus());
 }
 
-// Esc = clear
+// Esc = close diff sheet first, else clear
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && mode !== 'landing') resetToLanding();
+  if (e.key !== 'Escape') return;
+  if (diffBoxOpen) return closeDiffBox();
+  if (mode !== 'landing') resetToLanding();
 });
+
+// diff sheet: ⌘/Ctrl+Enter = run
+diffTa.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+    e.preventDefault();
+    lastDiffRaw = diffTa.value.trim();
+    if (!lastDiffRaw) return;
+    void runDiff(lastDiffRaw);
+  }
+});
+$('btn-diff-run').addEventListener('click', () => {
+  lastDiffRaw = diffTa.value.trim();
+  if (!lastDiffRaw) return;
+  void runDiff(lastDiffRaw);
+});
+$('btn-diff-cancel').addEventListener('click', closeDiffBox);
 
 // ---------- clipboard auto-load (best effort, zero main-thread cost) ----------
 // Browser reality:
