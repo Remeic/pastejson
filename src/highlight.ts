@@ -1,17 +1,5 @@
-import {
-  T_BOUND,
-  T_ERR,
-  T_FALSE,
-  T_KEY,
-  T_NULL,
-  T_NUM,
-  T_PUNCT,
-  T_STR,
-  T_TRUE,
-} from './tokenizer';
-
-// Token-type -> CSS class letter (T_BOUND has none — never rendered)
-const CLS = ['s', 'n', 'b', 'b', 'x', 'k', 'p', 'e', ''];
+// Token-type -> CSS class letter
+const CLS = ['s', 'n', 'b', 'b', 'x', 'k', 'p', 'e'];
 
 const AMP = '&amp;';
 const LT = '&lt;';
@@ -53,12 +41,6 @@ export function rangeHtml(src: string, tokens: Int32Array, start: number, end: n
       idx++;
       continue;
     }
-    if (tokens[idx * 2 + 1] === T_BOUND) {
-      // boundary marker: contributes no text, never rendered
-      if (tokEnd >= end) break;
-      idx++;
-      continue;
-    }
     const tokStart = idx > 0 ? tokens[(idx - 1) * 2] : 0;
     if (tokStart > pos) {
       const gapEnd = Math.min(tokStart, end);
@@ -76,6 +58,3 @@ export function rangeHtml(src: string, tokens: Int32Array, start: number, end: n
   if (pos < end) html += esc(src.slice(pos, end));
   return html;
 }
-
-// re-export for renderer convenience
-export { T_ERR, T_FALSE, T_KEY, T_NULL, T_NUM, T_PUNCT, T_STR, T_TRUE };

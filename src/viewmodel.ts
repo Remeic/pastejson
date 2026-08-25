@@ -21,6 +21,7 @@ export interface ViewModel {
   tokM: Int32Array | null; // lazy
   tree: FlatTree | null; // fused walk output; null on main for big docs (worker owns it)
   bytesIn: number;
+  docs: number; // >0 = JSONL document count
 }
 
 export function buildView(value: unknown, indent: number | '\t', bytesIn: number): ViewModel {
@@ -37,14 +38,16 @@ export function buildView(value: unknown, indent: number | '\t', bytesIn: number
     tokM: null,
     tree: r.tree,
     bytesIn,
+    docs: 0,
   };
 }
 
 export function ensureMin(vm: ViewModel): string {
-  if (vm.min === null) vm.min = JSON.stringify(vm.source);
-  return vm.min;
+  let m = vm.min;
+  if (m === null) m = vm.min = JSON.stringify(vm.source);
+  return m;
 }
 
 export function buildMinTokens(vm: ViewModel): void {
-  if (!vm.tokM) vm.tokM = tokenize(ensureMin(vm));
+  if (vm.tokM === null) vm.tokM = tokenize(ensureMin(vm));
 }

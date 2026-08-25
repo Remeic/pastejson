@@ -16,7 +16,6 @@ export const T_NULL = 4;
 export const T_KEY = 5;
 export const T_PUNCT = 6;
 export const T_ERR = 7;
-export const T_BOUND = 8; // zero/whitespace-width boundary marker (serialize only)
 
 // char classes
 const C_WS = 1;
@@ -128,12 +127,11 @@ export function tokenize(src: string, linesOut?: LineIndex): Int32Array {
           bsl++;
           k--;
         }
+        j = q + 1;
         if ((bsl & 1) === 0) {
-          j = q + 1;
           closed = true;
           break;
         }
-        j = q + 1; // escaped quote: keep scanning
       }
       if (!closed) {
         push(n, T_ERR);

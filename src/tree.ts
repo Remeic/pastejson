@@ -31,7 +31,7 @@ interface Frame {
   rowId: number;
 }
 
-export class GrowInt32 {
+class GrowInt32 {
   arr: Int32Array;
   len = 0;
   constructor(cap: number) {
@@ -123,30 +123,18 @@ export function flatten(value: unknown, capHint = 1024): FlatTree {
     return nf;
   };
 
-  const isBranch = (v: unknown): boolean =>
-    v !== null && (typeof v === 'object' || Array.isArray(v));
+  const isBranch = (v: unknown): boolean => v !== null && typeof v === 'object';
 
   const pushFrame = (v: Record<string, unknown> | unknown[], isArr: boolean, depth: number, keyIdx: number, rowId: number): void => {
     const f = getFrame();
-    if (isArr) {
-      f.obj = v;
-      f.isArr = true;
-      f.keysList = null;
-      f.len = (v as unknown[]).length;
-      f.idx = 0;
-      f.depth = depth;
-      f.keyIdx = keyIdx;
-      f.rowId = rowId;
-    } else {
-      f.obj = v;
-      f.isArr = false;
-      f.keysList = Object.keys(v as Record<string, unknown>);
-      f.len = f.keysList.length;
-      f.idx = 0;
-      f.depth = depth;
-      f.keyIdx = keyIdx;
-      f.rowId = rowId;
-    }
+    f.obj = v;
+    f.isArr = isArr;
+    f.keysList = isArr ? null : Object.keys(v as Record<string, unknown>);
+    f.len = isArr ? (v as unknown[]).length : (f.keysList as string[]).length;
+    f.idx = 0;
+    f.depth = depth;
+    f.keyIdx = keyIdx;
+    f.rowId = rowId;
   };
 
   // emit root row first
@@ -223,8 +211,6 @@ export function flatten(value: unknown, capHint = 1024): FlatTree {
     rowCount: n,
   };
 }
-
-export const KIND_LEAF = K_LEAF;
 
 // Visual order when some branches collapsed: skip whole subtrees.
 export function buildVisible(t: FlatTree, expanded: Uint8Array): Int32Array {
