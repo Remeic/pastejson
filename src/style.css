@@ -73,7 +73,6 @@ body[data-mode=loaded] #in { display: none; }
    No font-weight: it widens glyphs and resizes the button vs its siblings. */
 #toolbar .seg button.on {
   background: var(--accent); border-color: var(--accent); color: var(--bg);
-  box-shadow: 0 0 0 1px var(--accent);
 }
 #view-tag {
   font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em;
