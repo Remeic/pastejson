@@ -1,13 +1,12 @@
 import { tokenize } from './tokenizer';
 import { emitJson } from './serialize';
-import type { FlatTree } from './tree';
 
 // Shared view-model builder. Used by BOTH:
 // - main thread (small docs < WORKER_THRESHOLD)
 // - worker thread (big docs), which transfers typed arrays back
 //
-// Perf: ONE fused graph walk (serialize.ts) produces pretty text + tokens +
-// line index + tree columns. min string + min tokens are LAZY.
+// Perf: ONE fused walk (serialize.ts) produces pretty text + tokens +
+// line index. min string, min tokens and TREE are LAZY.
 
 export interface ViewModel {
   pretty: string;
@@ -19,7 +18,6 @@ export interface ViewModel {
   maxLen: number; // longest pretty line length (for h-scroll width)
   tokP: Int32Array; // tokens over pretty
   tokM: Int32Array | null; // lazy
-  tree: FlatTree | null; // fused walk output; null on main for big docs (worker owns it)
   bytesIn: number;
   docs: number; // >0 = JSONL document count
 }
@@ -36,7 +34,6 @@ export function buildView(value: unknown, indent: number | '\t', bytesIn: number
     maxLen: r.maxLen,
     tokP: r.tokens,
     tokM: null,
-    tree: r.tree,
     bytesIn,
     docs: 0,
   };

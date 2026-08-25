@@ -1,7 +1,6 @@
 import './style.css';
 import { parseInput } from './parse';
 import { buildView, ensureMin, type ViewModel } from './viewmodel';
-import { materializeLabels } from './serialize';
 import type { FlatTree } from './tree';
 import { flatten, buildVisible } from './tree';
 import { VScroll } from './vscroll';
@@ -230,6 +229,8 @@ function ensureWorker(): Worker {
           maxLen: number;
           indent: number | '\t';
           docs: number;
+          tokPLen: number;
+          lsLen: number;
           lineStartsBuf: ArrayBuffer;
           tokPBuf: ArrayBuffer;
           ms?: number;
@@ -299,12 +300,11 @@ function ensureWorker(): Worker {
       min: null,
       source: null, // big path: value lives in the worker
       indent: m.indent,
-      lineStarts: new Uint32Array(m.lineStartsBuf),
+      lineStarts: new Uint32Array(m.lineStartsBuf, 0, m.lsLen),
       lines: m.lines,
       maxLen: m.maxLen,
-      tokP: new Int32Array(m.tokPBuf),
+      tokP: new Int32Array(m.tokPBuf, 0, m.tokPLen),
       tokM: null,
-      tree: null,
       bytesIn,
       docs: m.docs ?? 0,
     };
@@ -436,13 +436,8 @@ function mountScroller(v: ViewName, anchorTopVisual: number): void {
     scroller.setRowCount(sbs ? alignedRes!.rowCount : (diffRes?.rowCount ?? 0));
   } else {
     if (!ft) {
-      if (vm?.tree) {
-        // small doc: structure came free with the fused pass; labels lazy
-        ft = vm.tree;
-        if (ft.keyIdx.length !== ft.rowCount) materializeLabels(ft, vm!.pretty, vm!.tokP);
-        expanded = new Uint8Array(ft.rowCount).fill(1);
-        visibleRows = buildVisible(ft, expanded);
-      } else if (parsedValue !== null) {
+      if (parsedValue !== null) {
+        // small doc: tree is lazy — flatten on first Tree mount (self-labeled)
         ft = flatten(parsedValue, vm?.lines);
         expanded = new Uint8Array(ft.rowCount).fill(1);
         visibleRows = buildVisible(ft, expanded);

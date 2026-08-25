@@ -6,11 +6,13 @@ Paste → paint. The product IS the speed: every feature competes with milliseco
 
 `JSON.parse` + `JSON.stringify` are native C++ and own ~18ms of the 5MB pipeline. A JS streaming formatter that skips them measured 2× slower and was deleted — trust the floor, optimize the JS around it. Reintroducing a bypass requires beating `bun run bench` first.
 
+Post walk-diet split (5MB paste path, min-of-7): parse 5.5 + stringify 8.8 = **14.3ms native floor (67%)**; the JS walk is the only optimizable slice and sits within ~0.5ms of its measured component floor (escLen regex 2ms — charCode loops measured slower on JSC; Object.keys 0.8 + keyed loads 1.0; line-records ~2; dispatch ~0.7). Captured-scope writes cost ~40% over true locals (5.4 vs 3.9 ns/token, agent-measured) — the per-child path stays closure-free; token capacity is mathematically bounded (token ints ≤ plen+2) so pushes are branch-free plain stores.
+
 ## Invariants
 
 Breaking one is a regression even with green tests:
 
-- **Single pass** — `emitJson` walks the value once, emitting pretty + tokens + lines + tree together. Labels are lazy (`materializeLabels` slices `pretty` on first Tree open). No second scan of the value, no re-stringify on toggle.
+- **Single pass** — `emitJson` walks the value once, emitting pretty + tokens + line index together. Tree is LAZY: `flatten()` rebuilds it on demand (first Tree open / worker `getTree`), same philosophy as lazy labels/min. No second scan on the paste path, no re-stringify on toggle.
 - **No rope** — JSC punishes `out +=` piece-chains and closure-captured state in per-char paths at ~19ns/char (measured). Hot writers keep state as true locals; a helper closure inside the per-char path is a measured regression.
 - **Punct tokens dropped by design** — braces/colons/commas render via base `code` color, which equals the punct color. Fuzz therefore compares token pairs against `tokenize(pretty)` **filtered to non-punct**. Re-adding them re-bloats the table.
 - **lineStarts point after the `\n`, before the indent** — recording them later leaks each line's indent into the previous row: the flush-left bug. `textHtml` ends line *i* at `LS[i+1] - 1`.
@@ -24,7 +26,7 @@ Breaking one is a regression even with green tests:
 
 ## Red gate
 
-`bun run build` (tsc + singlefile build), `bun test`, `bun tests/fuzz.ts`, `bun run bench` — bench exits non-zero on a 5MB pipeline regression. A feature ships only with the gate green; a perf change ships only with the bench number attached.
+`bun run build` (tsc + singlefile build), `bun test`, `bun tests/fuzz.ts`, `bun run bench` — bench gates the PASTE PATH (parse → buildView → paint, min-of-7) and exits non-zero on regression; tree/min are lazy and reported on-demand, not gated. A feature ships only with the gate green; a perf change ships only with the bench number attached.
 
 ## Platform edges (measured; not fixable in code)
 

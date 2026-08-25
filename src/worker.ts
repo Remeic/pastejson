@@ -1,16 +1,14 @@
 import { buildView, buildMinTokens, ensureMin, type ViewModel } from './viewmodel';
-import { materializeLabels } from './serialize';
 import { parseInput } from './parse';
-import type { FlatTree } from './tree';
+import { flatten, type FlatTree } from './tree';
 
 // Worker path for big payloads (>256KB).
-// - parse + fused serialize (pretty/tokens/lines/tree) happen here
+// - parse + fused serialize (pretty/tokens/lines) happen here
 // - buffers transfer back zero-copy
-// - parsed value + tree columns cached here; sent only on demand (getTree/getMin)
+// - parsed value cached here; tree built on demand via flatten (getTree)
 
 let cachedValue: unknown = null;
 let cachedVM: ViewModel | null = null;
-let cachedTree: FlatTree | null = null;
 let cachedDocs = 0;
 
 type InMsg =
@@ -46,6 +44,9 @@ function replyVM(id: number, vm: ViewModel, ms: number): void {
       indent: vm.indent,
       ms,
       docs: cachedDocs,
+      // buffers are seed-sized; views are subarrays — lengths travel explicitly
+      tokPLen: vm.tokP.length,
+      lsLen: vm.lineStarts.length,
       lineStartsBuf: vm.lineStarts.buffer,
       tokPBuf: vm.tokP.buffer,
     },
@@ -92,7 +93,6 @@ self.onmessage = (e: MessageEvent<InMsg>): void => {
         }
         cachedValue = r.value;
         cachedDocs = r.kind === 'jsonl' ? r.docs : 0;
-        cachedTree = null;
         cachedVM = buildView(cachedValue, m.indent, m.raw.length);
         replyVM(m.id, cachedVM, performance.now() - t0);
       } catch (err) {
@@ -105,19 +105,14 @@ self.onmessage = (e: MessageEvent<InMsg>): void => {
       const prev = cachedVM;
       if (cachedValue === null || prev === null) return;
       cachedVM = buildView(cachedValue, m.indent, prev.bytesIn);
-      cachedTree = null;
       replyVM(m.id, cachedVM, 0);
       return;
     }
     case 'getTree': {
       const vm = cachedVM;
-      if (vm === null) return;
-      // tree structure already built by the fused pass — materialize labels here
-      const t = cachedTree ?? vm.tree;
-      cachedTree = null; // buffers detached after transfer
-      if (t === null) return;
-      materializeLabels(t, vm.pretty, vm.tokP);
-      replyTree(m.id, t);
+      if (vm === null || cachedValue === null) return;
+      // tree is lazy: flatten on demand (labels built during the walk)
+      replyTree(m.id, flatten(cachedValue, vm.lines));
       return;
     }
     case 'getMin': {
