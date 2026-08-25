@@ -26,7 +26,7 @@ Breaking one is a regression even with green tests:
 
 ## Red gate
 
-`bun run build` (tsc + singlefile build), `bun test`, `bun tests/fuzz.ts`, `bun run bench` — bench gates the PASTE PATH (parse → buildView → paint, min-of-7) and exits non-zero on regression; tree/min are lazy and reported on-demand, not gated. A feature ships only with the gate green; a perf change ships only with the bench number attached.
+`bun run build` (tsc + singlefile build), `bun test`, `bun tests/fuzz.ts`, `bun run bench` — bench gates the PASTE PATH via the **walk/native ratio** (per-run: (total − parse − stringify) / (parse + stringify), min-of-7, trip at 0.75): absolute ms flake with machine heat/load (observed 21→40ms with zero path changes), but native floor and pipeline drift TOGETHER, so only real walk regressions move the ratio. Tree/min are lazy and reported on-demand, not gated. A feature ships only with the gate green; a perf change ships only with the bench number attached.
 
 ## Platform edges (measured; not fixable in code)
 
