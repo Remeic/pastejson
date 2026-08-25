@@ -1,7 +1,7 @@
 // Perf smoke: synthetic ~5MB payload through the FULL pipeline.
 // Run: bun scripts/bench.ts
-import { buildView } from '../src/viewmodel';
-import { flatten, buildVisible } from '../src/tree';
+import { buildView, buildMinTokens } from '../src/viewmodel';
+import { buildVisible } from '../src/tree';
 import { rangeHtml } from '../src/highlight';
 import { performance } from 'node:perf_hooks';
 
@@ -22,47 +22,71 @@ function gen(rows: number): Record<string, unknown> {
 }
 
 const target = 5 * 1024 * 1024;
-let payload!: ReturnType<typeof gen>;
 let lo = 1000;
 let hi = 200000;
-// bisect row count to land near 5MB pretty size
 for (let it = 0; it < 18; it++) {
   const mid = (lo + hi) >> 1;
   const cand = JSON.stringify(gen(mid), null, 2);
   if (cand.length < target) lo = mid;
   else hi = mid;
 }
-payload = gen(lo);
+const payload = gen(lo);
 const raw = JSON.stringify(payload);
 console.log(`payload minified: ${(raw.length / 1048576).toFixed(2)} MB, items: ${lo}`);
 
-const tParse0 = performance.now();
-const value: unknown = JSON.parse(raw);
-const tParse = performance.now() - tParse0;
+// warm + measured runs (median of 3)
+const runs: { parse: number; buildView: number; visible: number; paint: number; total: number }[] = [];
+for (let run = 0; run < 3; run++) {
+  let t0 = performance.now();
+  const value: unknown = JSON.parse(raw);
+  const tParse = performance.now() - t0;
 
-const tView0 = performance.now();
-const vm = buildView(value, 2, raw.length);
-const tView = performance.now() - tView0;
+  t0 = performance.now();
+  const vm = buildView(value, 2, raw.length);
+  const tView = performance.now() - t0;
 
-const tFlat0 = performance.now();
-const ft = flatten(value);
-const vis = buildVisible(ft, new Uint8Array(ft.rowCount).fill(1));
-const tFlat = performance.now() - tFlat0;
-if (vis.length !== ft.rowCount) throw new Error('visible mismatch');
+  t0 = performance.now();
+  const ft = vm.tree!;
+  const vis = buildVisible(ft, new Uint8Array(ft.rowCount).fill(1));
+  const tVisible = performance.now() - t0;
+  if (vis.length !== ft.rowCount) throw new Error('visible mismatch');
 
-const tPaint0 = performance.now();
-const sample = rangeHtml(vm.pretty, vm.tokP, 0, 20000);
-const tPaint = performance.now() - tPaint0;
+  t0 = performance.now();
+  rangeHtml(vm.pretty, vm.tokP, 0, 20000);
+  const tPaint = performance.now() - t0;
 
-console.log(`parse            ${tParse.toFixed(1)} ms`);
-console.log(`buildView        ${tView.toFixed(1)} ms  (pretty ${(vm.pretty.length / 1048576).toFixed(2)} MB, ${vm.lines} lines, tokens ${(vm.tokP.length >> 1)})`);
-console.log(`flatten+visible  ${tFlat.toFixed(1)} ms  (${ft.rowCount} nodes)`);
-console.log(`window paint 20k ${tPaint.toFixed(1)} ms  (sample ${sample.length} chars)`);
+  runs.push({ parse: tParse, buildView: tView, visible: tVisible, paint: tPaint, total: tParse + tView + tVisible + tPaint });
 
-const budgetMs = 400;
-const total = tParse + tView + tFlat;
-if (total > budgetMs) {
-  console.warn(`WARN: pipeline ${total.toFixed(0)}ms > ${budgetMs}ms budget`);
-} else {
-  console.log(`pipeline OK: ${total.toFixed(0)}ms <= ${budgetMs}ms budget`);
+  if (run === 0) {
+    console.log(
+      `pretty ${(vm.pretty.length / 1048576).toFixed(2)} MB, ${vm.lines} lines, tokens ${vm.tokP.length >> 1}, nodes ${ft.rowCount}`,
+    );
+    const t1 = performance.now();
+    buildMinTokens(vm);
+    console.log(`lazy min+tokens (on demand): ${(performance.now() - t1).toFixed(1)} ms`);
+  }
 }
+
+const median = (xs: number[]): number => {
+  const s = [...xs].sort((a, b) => a - b);
+  return s[s.length >> 1];
+};
+const p = {
+  parse: median(runs.map((r) => r.parse)),
+  buildView: median(runs.map((r) => r.buildView)),
+  visible: median(runs.map((r) => r.visible)),
+  paint: median(runs.map((r) => r.paint)),
+};
+const total = median(runs.map((r) => r.total));
+console.log(`parse            ${p.parse.toFixed(1)} ms`);
+console.log(`buildView(fused) ${p.buildView.toFixed(1)} ms  ← native stringify + zero-string length walk`);
+console.log(`buildVisible     ${p.visible.toFixed(1)} ms`);
+console.log(`window paint 20k ${p.paint.toFixed(1)} ms`);
+console.log(`pipeline total   ${total.toFixed(1)} ms (median of 3)`);
+
+const budgetMs = 44; // ≥40% under the 73.5ms baseline
+if (total > budgetMs) {
+  console.warn(`FAIL: pipeline ${total.toFixed(0)}ms > ${budgetMs}ms target (−40% vs 73.5ms baseline)`);
+  process.exit(1);
+}
+console.log(`PASS: ${total.toFixed(0)}ms ≤ ${budgetMs}ms target (≥40% vs 73.5ms baseline)`);

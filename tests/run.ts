@@ -2,7 +2,7 @@
 import assert from 'node:assert';
 import { tokenize, T_STR, T_NUM, T_KEY, T_PUNCT, T_TRUE, T_FALSE, T_NULL } from '../src/tokenizer';
 import { parseJson } from '../src/parse';
-import { buildView } from '../src/viewmodel';
+import { buildView, ensureMin } from '../src/viewmodel';
 import { flatten, buildVisible } from '../src/tree';
 import { rangeHtml } from '../src/highlight';
 
@@ -65,7 +65,7 @@ ok('buildView lines + lineStarts + maxLen', () => {
   assert.strictEqual(vm.lines, 7); // pretty of that doc has 7 lines
   assert.strictEqual(vm.lineStarts.length, vm.lines);
   assert.ok(vm.maxLen > 0);
-  assert.strictEqual(vm.min, '{"a":[1,2],"b":"xyz"}');
+  assert.strictEqual(ensureMin(vm), '{"a":[1,2],"b":"xyz"}');
 });
 
 ok('buildView tab indent', () => {
