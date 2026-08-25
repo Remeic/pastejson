@@ -15,6 +15,8 @@ export function textHtml(vm: ViewModel, first: number, count: number): string {
   let h = '';
   for (let i = first; i < last; i++) {
     const s = LS[i];
+    // line content = [LS[i], newline) — the next line's leading indent lives
+    // after the '\n' and must NOT leak into this row (or vanish with it)
     const e = i + 1 < L ? LS[i + 1] - 1 : P.length;
     h += `<div class="row"><span class="ln">${i + 1}</span><code>${rangeHtml(P, TOK, s, e)}</code></div>`;
   }

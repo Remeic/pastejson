@@ -239,10 +239,10 @@ export function emitJson(
     g.set(ls);
     ls = g;
   }
-  // d is always >= 0 here (childDepth-1 >= 0); d*indLen === 0 when d === 0
-  pos += 1 + d * indLen;
+  pos += 1; // the '\n'
   ls[llen++] = pos;
   lineStart = pos;
+  if (d > 0) pos += d * indLen; // indent AFTER line-start record
     }
   }
 
@@ -263,10 +263,10 @@ export function emitJson(
     g.set(ls);
     ls = g;
   }
-  // d is always >= 0 here (childDepth-1 >= 0); d*indLen === 0 when d === 0
-  pos += 1 + d * indLen;
+  pos += 1; // the '\n'
   ls[llen++] = pos;
   lineStart = pos;
+  if (d > 0) pos += d * indLen; // indent AFTER line-start record
     }
       pos += 1;
       rk[f.rowId * STRIDE + 5] = rowCount - f.rowId;
@@ -290,10 +290,10 @@ export function emitJson(
     g.set(ls);
     ls = g;
   }
-  // d is always >= 0 here (childDepth-1 >= 0); d*indLen === 0 when d === 0
-  pos += 1 + d * indLen;
+  pos += 1; // the '\n'
   ls[llen++] = pos;
   lineStart = pos;
+  if (d > 0) pos += d * indLen; // indent AFTER line-start record
     }
     }
     f.first = false;
@@ -329,10 +329,10 @@ export function emitJson(
     g.set(ls);
     ls = g;
   }
-  // d is always >= 0 here (childDepth-1 >= 0); d*indLen === 0 when d === 0
-  pos += 1 + d * indLen;
+  pos += 1; // the '\n'
   ls[llen++] = pos;
   lineStart = pos;
+  if (d > 0) pos += d * indLen; // indent AFTER line-start record
     }
       }
     } else {
