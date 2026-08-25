@@ -8,7 +8,6 @@ import {
   T_KEY,
   T_NULL,
   T_NUM,
-  T_PUNCT,
   T_STR,
   T_TRUE,
 } from './tokenizer';
@@ -111,23 +110,31 @@ export function emitJson(
     tk[tlen++] = end;
     tk[tlen++] = type;
   };
-  const bumpMax = (): void => {
-    const seg = pos - lineStart;
-    if (seg > maxLen) maxLen = seg;
-  };
 
   // leaf value: advance pos over its pretty span + emit one token pair
   const emitLeafVal = (v: unknown): void => {
     const t = typeof v;
     let type: number;
     if (t === 'number') {
-      let jN = pos;
-      while (jN < plen) {
-        const cN = pretty.charCodeAt(jN);
-        if (cN === 44 || cN === 10 || cN === 125 || cN === 93) break;
-        jN++;
+      const num = v as number;
+      if (Number.isInteger(num) && num < 1e9 && num > -1e9) {
+        // arithmetic digit count — no scan, no alloc
+        let a = num < 0 ? -num : num;
+        let d = 1;
+        while (a >= 10) {
+          a = (a / 10) | 0;
+          d++;
+        }
+        pos += d + (num < 0 ? 1 : 0);
+      } else {
+        let jN = pos;
+        while (jN < plen) {
+          const cN = pretty.charCodeAt(jN);
+          if (cN === 44 || cN === 10 || cN === 125 || cN === 93) break;
+          jN++;
+        }
+        pos = jN;
       }
-      pos = jN;
       type = T_NUM;
     } else if (t === 'string') {
       pos += escLen(v as string) + 2;
@@ -171,7 +178,6 @@ export function emitJson(
     rk[p + 4] = 0; // meta
     rk[p + 5] = -1; // subtree pending (branches) — leaves set below
     const row = rowCount++;
-    pushTok(pos + 1, T_PUNCT);
     pos += 1;
     const f = getFrame();
     f.isArr = isArr;
@@ -184,7 +190,6 @@ export function emitJson(
     f.first = true;
     if (f.len === 0) {
       pos += 1;
-      pushTok(pos, T_PUNCT);
       rk[row * STRIDE + 5] = rowCount - row;
       frameTop--;
       return false;
@@ -196,20 +201,6 @@ export function emitJson(
 
 
 
-  const newlineIndent = (d: number): void => {
-    bumpMax();
-    nl++;
-    if (llen === lcap) {
-      lcap <<= 1;
-      const g = new Uint32Array(lcap);
-      g.set(ls);
-      ls = g;
-    }
-    // d is always >= 0 here (childDepth-1 >= 0); d*indLen === 0 when d === 0
-    pos += 1 + d * indLen;
-    ls[llen++] = pos;
-    lineStart = pos;
-  };
 
   // ---- root ----
   if (!isBranch(value)) {
@@ -218,29 +209,66 @@ export function emitJson(
     rk[1] = 0;
     rk[2] = -1;
     rk[3] = (tlen >> 1) - 1; // valTok
-    rk[4] = 0;
-    rk[5] = -1;
-    rowCount = 1;
-    bumpMax();
+    rowCount = 1; // rk[4]/rk[5] via finish defaults
+    {
+      const seg = pos - lineStart;
+      if (seg > maxLen) maxLen = seg;
+    }
     return finish();
   }
   {
     const pushed = openContainer(value, -1, 0);
     if (!pushed) {
-      bumpMax();
+      {
+      const seg = pos - lineStart;
+      if (seg > maxLen) maxLen = seg;
+    }
       return finish();
     }
     cf = framePool[frameTop - 1];
-    newlineIndent(1);
+    {
+      const d = 1;
+  {
+    const seg = pos - lineStart;
+    if (seg > maxLen) maxLen = seg;
+  }
+  nl++;
+  if (llen === lcap) {
+    lcap <<= 1;
+    const g = new Uint32Array(lcap);
+    g.set(ls);
+    ls = g;
+  }
+  // d is always >= 0 here (childDepth-1 >= 0); d*indLen === 0 when d === 0
+  pos += 1 + d * indLen;
+  ls[llen++] = pos;
+  lineStart = pos;
+    }
   }
 
   // ---- iterative walk ----
   while (frameTop > 0) {
     const f = cf;
     if (f.idx >= f.len) {
-      newlineIndent(f.childDepth - 1);
+      {
+      const d = f.childDepth - 1;
+  {
+    const seg = pos - lineStart;
+    if (seg > maxLen) maxLen = seg;
+  }
+  nl++;
+  if (llen === lcap) {
+    lcap <<= 1;
+    const g = new Uint32Array(lcap);
+    g.set(ls);
+    ls = g;
+  }
+  // d is always >= 0 here (childDepth-1 >= 0); d*indLen === 0 when d === 0
+  pos += 1 + d * indLen;
+  ls[llen++] = pos;
+  lineStart = pos;
+    }
       pos += 1;
-      pushTok(pos, T_PUNCT);
       rk[f.rowId * STRIDE + 5] = rowCount - f.rowId;
       frameTop--;
       cf = framePool[frameTop - 1];
@@ -249,8 +277,24 @@ export function emitJson(
 
     if (!f.first) {
       pos += 1;
-      pushTok(pos, T_PUNCT);
-      newlineIndent(f.childDepth);
+      {
+      const d = f.childDepth;
+  {
+    const seg = pos - lineStart;
+    if (seg > maxLen) maxLen = seg;
+  }
+  nl++;
+  if (llen === lcap) {
+    lcap <<= 1;
+    const g = new Uint32Array(lcap);
+    g.set(ls);
+    ls = g;
+  }
+  // d is always >= 0 here (childDepth-1 >= 0); d*indLen === 0 when d === 0
+  pos += 1 + d * indLen;
+  ls[llen++] = pos;
+  lineStart = pos;
+    }
     }
     f.first = false;
 
@@ -262,11 +306,9 @@ export function emitJson(
       const k = (f.keysList as string[])[f.idx];
       child = (f.obj as Record<string, unknown>)[k];
       pos += escLen(k) + 2;
-      keyTok = tlen >> 1; // pair idx AFTER this push
       pushTok(pos, T_KEY);
-      pos += 1; // ':'
-      pushTok(pos, T_PUNCT);
-      pos += 1; // ' '
+      keyTok = (tlen >> 1) - 1;
+      pos += 2; // ': '
     }
     f.idx++;
     rk[f.rowId * STRIDE + 4]++; // meta: child count
@@ -274,7 +316,24 @@ export function emitJson(
     if (isBranch(child)) {
       if (openContainer(child, keyTok, f.childDepth)) {
         cf = framePool[frameTop - 1];
-        newlineIndent(f.childDepth + 1);
+        {
+      const d = f.childDepth + 1;
+  {
+    const seg = pos - lineStart;
+    if (seg > maxLen) maxLen = seg;
+  }
+  nl++;
+  if (llen === lcap) {
+    lcap <<= 1;
+    const g = new Uint32Array(lcap);
+    g.set(ls);
+    ls = g;
+  }
+  // d is always >= 0 here (childDepth-1 >= 0); d*indLen === 0 when d === 0
+  pos += 1 + d * indLen;
+  ls[llen++] = pos;
+  lineStart = pos;
+    }
       }
     } else {
       emitLeafVal(child);
@@ -286,14 +345,15 @@ export function emitJson(
       rk[p] = f.childDepth;
       rk[p + 1] = 0;
       rk[p + 2] = keyTok;
-      rk[p + 3] = (tlen >> 1) - 1; // valTok
-      rk[p + 4] = 0; // meta
-      rk[p + 5] = -1; // subtree n/a for leaves
+      rk[p + 3] = (tlen >> 1) - 1; // valTok; meta/subtree via finish defaults
       rowCount++;
     }
   }
 
-  bumpMax();
+  {
+    const seg = pos - lineStart;
+    if (seg > maxLen) maxLen = seg;
+  }
   return finish();
 
   function finish(): EmitResult {
@@ -309,8 +369,9 @@ export function emitJson(
       kind[i] = rk[p + 1];
       keyTokIdx[i] = rk[p + 2];
       valTokIdx[i] = rk[p + 3];
-      meta[i] = rk[p + 4];
-      subtreeRows[i] = rk[p + 5];
+      meta[i] = rk[p + 4]; // leaves: never written → 0
+      const st = rk[p + 5];
+      subtreeRows[i] = st === -1 ? 1 : st; // leaves: -1 sentinel → 1
     }
     return {
       pretty,
@@ -367,7 +428,7 @@ export function materializeLabels(t: FlatTree, pretty: string, tokens: Int32Arra
     if (vt >= 0) {
       let s = pretty.slice(spanStart(vt), tokens[vt * 2]);
       let a = 0;
-      while (a < s.length && isWs(s.charCodeAt(a))) a++;
+      while (a < s.length && (isWs(s.charCodeAt(a)) || s.charCodeAt(a) === 58)) a++; // ws + ':'
       s = s.slice(a);
       if (s.length > MAX_PREVIEW) {
         s = s.slice(0, MAX_PREVIEW - 1);
