@@ -498,8 +498,17 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ---------- clipboard auto-load (best effort, zero main-thread cost) ----------
+// Browser reality:
+//  - Chrome/Edge: works on load ONLY if clipboard permission already granted;
+//    first-use shows the permission prompt when called during a gesture.
+//  - Firefox: requires a gesture per read — shows its paste doorhanger.
+//  - Safari: gesture + its own paste confirmation.
+// Strategy: attempt on load (covers granted permission = instant auto-load),
+// then retry on EVERY user activation until success (prompt shows once,
+// permission persists → all future visits auto-load).
 const CLIPBOARD_CAP = 8 * 1024 * 1024; // 8MB guard
 let clipLoaded = false;
+let clipPending = false;
 
 // cheap leading-char probe before paying for a parse
 function looksLikeJson(t: string): boolean {
@@ -519,10 +528,11 @@ function looksLikeJson(t: string): boolean {
 }
 
 async function tryClipboardAuto(): Promise<void> {
-  if (clipLoaded || mode !== 'landing') return;
+  if (clipLoaded || clipPending || mode !== 'landing') return;
+  const read = navigator.clipboard?.readText;
+  if (!read) return; // no API (old browser) — Ctrl+V hint covers it
+  clipPending = true;
   try {
-    const read = navigator.clipboard?.readText;
-    if (!read) return;
     const t = await read.call(navigator.clipboard);
     if (!t || t.length > CLIPBOARD_CAP || !looksLikeJson(t)) return;
     if (mode !== 'landing') return; // user acted first — never race them
@@ -531,19 +541,24 @@ async function tryClipboardAuto(): Promise<void> {
     load(t);
     toast('Loaded from clipboard');
   } catch {
-    /* denied / needs gesture — stay silent */
+    /* denied / dismissed — retried on next activation */
+  } finally {
+    clipPending = false;
   }
 }
 
-// after first paint, off the critical path
+// after first paint, off the critical path (works when permission granted)
 requestAnimationFrame(() => setTimeout(() => void tryClipboardAuto(), 0));
 
-// gesture-backed retry (Firefox/Safari require a gesture): once, silently
+// every user activation retries — Firefox/Safari need the gesture for their
+// paste prompt; once allowed, the permission persists for future visits
 const clipRetry = (): void => {
   if (!clipLoaded && mode === 'landing') void tryClipboardAuto();
 };
-document.addEventListener('pointerdown', clipRetry, { once: true });
-document.addEventListener('keydown', clipRetry, { once: true });
+document.addEventListener('pointerdown', clipRetry);
+document.addEventListener('touchstart', clipRetry, { passive: true });
+document.addEventListener('keydown', clipRetry);
+window.addEventListener('focus', clipRetry);
 
 // service worker (prod only)
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
