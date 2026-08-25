@@ -6,6 +6,7 @@ import { buildView, ensureMin } from '../src/viewmodel';
 import { flatten, buildVisible } from '../src/tree';
 import { rangeHtml } from '../src/highlight';
 import { diffJson, diffAligned, OP_ADD, OP_DEL, OP_SAME, OP_MOD, type DiffResult } from '../src/diffcore';
+import { diffHtml, sbsHtml } from '../src/diffview';
 
 let passed = 0;
 function ok(name: string, fn: () => void): void {
@@ -412,6 +413,20 @@ ok('aligned: seeded fuzz pair invariants', () => {
     for (let r = 0; r < d.rowCount; r++) if (d.op[r] !== OP_SAME) nonSame++;
     assert.ok(nonSame >= 1, `changed @${it}`);
   }
+});
+
+// ---------- painters (lazy island views) ----------
+ok('painters: focus + sbs emit escaped html with cells/gutters', () => {
+  const f = diffJson({ k: '<x>' }, { k: 'y>' });
+  const fh = diffHtml(f, 0, f.rowCount);
+  assert.ok(fh.includes('d-del') && fh.includes('d-add'));
+  assert.ok(fh.includes('&lt;x&gt;'), 'focus escapes');
+  const a = diffAligned({ k: '<x>' }, { k: 'y>' });
+  const ah = sbsHtml(a, 0, a.rowCount);
+  assert.ok(ah.includes('<div class="sc sl">') && ah.includes('<div class="sc sr">'));
+  assert.ok(ah.includes('d-mod'), 'mod row class');
+  const empty = sbsHtml(diffAligned({ z: 1 }, {}), 1, 1); // a removed-subtree row
+  assert.ok(empty.includes('<span class="dg"></span>'), 'empty spacer cell');
 });
 
 console.log(`\n${passed} tests passed`);

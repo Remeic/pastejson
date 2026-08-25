@@ -89,27 +89,35 @@
 
     <main id="out" hidden>
       <pre id="rawprev" hidden></pre>
-      <div id="view"></div>
-    </main>
-
-    <div id="diffbox" hidden>
-      <div id="diffbox-card">
-        <div id="diffbox-head">Diff — paste JSON <b>B</b> <span class="muted">(current doc is A)</span></div>
-        <textarea
-          id="diff-in"
-          spellcheck="false"
-          autocomplete="off"
-          autocapitalize="off"
-          aria-label="JSON B for diff"
-        ></textarea>
-        <div id="diffbox-msg" role="alert"></div>
-        <div id="diffbox-actions">
-          <span class="muted hint-key">⌘⏎ / Ctrl+Enter</span>
-          <button id="btn-diff-cancel">Cancel</button>
-          <button id="btn-diff-run" class="primary">Diff</button>
-        </div>
+      <div id="mainrow">
+        <div id="view"></div>
+        <aside id="diffpanel" hidden>
+          <div id="dp-head">
+            <b>Diff</b>
+            <span id="dp-status"></span>
+            <button id="btn-dp-close" title="Close panel (Esc)" aria-label="Close diff panel">✕</button>
+          </div>
+          <div class="seg dp-modes" role="tablist" aria-label="Diff mode">
+            <button id="btn-dp-focus" class="on">Changes</button>
+            <button id="btn-dp-sbs">Side by side</button>
+          </div>
+          <textarea
+            id="diff-in"
+            spellcheck="false"
+            autocomplete="off"
+            autocapitalize="off"
+            aria-label="JSON B for diff"
+            placeholder='paste JSON "B" here — current doc is A'
+          ></textarea>
+          <div id="dp-msg" role="alert"></div>
+          <div id="dp-actions">
+            <span class="muted hint-key">⌘⏎ / Ctrl+Enter</span>
+            <button id="btn-diff-cancel">Clear</button>
+            <button id="btn-diff-run" class="primary">Diff</button>
+          </div>
+        </aside>
       </div>
-    </div>
+    </main>
 
     <div id="toast" role="status"></div>
     <div id="drop-overlay" hidden>Drop JSON file…</div>
