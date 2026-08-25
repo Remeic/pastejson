@@ -142,12 +142,12 @@ export function flatten(value: unknown, capHint = 1024): FlatTree {
     const row = rowCount++;
     depthA.push(depth);
     keyIdxA.push(keyIdx);
-    valIdxA.push(-1);
     keyTokA.push(-1);
     valTokA.push(-1);
     metaA.push(0);
     if (isBranch(v)) {
       kindA.push(Array.isArray(v) ? K_ARR : K_OBJ);
+      valIdxA.push(-1);
       subtreeA.push(-1); // pending finalize
     } else {
       kindA.push(K_LEAF);

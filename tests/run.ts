@@ -7,6 +7,7 @@ import { flatten, buildVisible } from '../src/tree';
 import { rangeHtml } from '../src/highlight';
 import { diffJson, diffAligned, OP_ADD, OP_DEL, OP_SAME, OP_MOD, type DiffResult } from '../src/diffcore';
 import { diffHtml, sbsHtml } from '../src/diffview';
+import { treeHtml } from '../src/render';
 
 let passed = 0;
 function ok(name: string, fn: () => void): void {
@@ -107,6 +108,25 @@ ok('buildVisible collapse skips subtrees', () => {
   exp[1] = 0; // collapse node 1 (a's inner obj) — subtreeRows[1]=2 → skip node 2
   const vis = buildVisible(ft, exp);
   assert.deepStrictEqual([...vis], [0, 1, 3]);
+});
+
+ok('flatten columns stay aligned: leaf valIdx resolves, branch valIdx = -1', () => {
+  // regression: emit() used to push -1 into valIdxA unconditionally AND again
+  // for leaves — columns drifted by one per leaf (latent until flatten became
+  // the only tree source)
+  const ft = flatten({ a: 1, b: [2, 3], c: { d: null } });
+  for (let r = 0; r < ft.rowCount; r++) {
+    if (ft.kind[r] === 0) {
+      assert.ok(ft.valIdx[r] >= 0, `leaf valIdx @${r}`);
+      assert.strictEqual(typeof ft.vals[ft.valIdx[r]], 'string', `val @${r}`);
+    } else {
+      assert.strictEqual(ft.valIdx[r], -1, `branch valIdx @${r}`);
+    }
+    assert.ok(ft.keyIdx[r] >= -1);
+  }
+  // spot: row 1 is leaf "a": 1
+  assert.strictEqual(ft.keys[ft.keyIdx[1]], 'a');
+  assert.strictEqual(ft.vals[ft.valIdx[1]], '1');
 });
 
 // ---------- highlighter ----------
@@ -416,6 +436,17 @@ ok('aligned: seeded fuzz pair invariants', () => {
 });
 
 // ---------- painters (lazy island views) ----------
+ok('painters: treeHtml renders flatten output end-to-end', () => {
+  // regression guard: the valIdx drift crash surfaced here first (valCls(undefined))
+  const ft = flatten({ a: 1, b: [2, 'x'], c: { d: null } });
+  const expanded = new Uint8Array(ft.rowCount).fill(1);
+  const vis = buildVisible(ft, expanded);
+  const html = treeHtml(ft, expanded, vis, 0, vis.length);
+  assert.ok(html.includes('>a<') && html.includes('>1<'), 'key + leaf value render');
+  assert.ok(!html.includes('undefined'), 'no undefined leaks');
+  assert.strictEqual(html.split('trow').length - 1, ft.rowCount);
+});
+
 ok('painters: focus + sbs emit escaped html with cells/gutters', () => {
   const f = diffJson({ k: '<x>' }, { k: 'y>' });
   const fh = diffHtml(f, 0, f.rowCount);

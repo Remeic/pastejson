@@ -1,6 +1,6 @@
 import './style.css';
 import { parseInput } from './parse';
-import { buildView, ensureMin, type ViewModel } from './viewmodel';
+import { buildView, ensureMin, buildMinTokens, type ViewModel } from './viewmodel';
 import type { FlatTree } from './tree';
 import { flatten, buildVisible } from './tree';
 import { VScroll } from './vscroll';
@@ -19,6 +19,13 @@ const ROW_H = 20;
 const WORKER_THRESHOLD = 256 * 1024;
 const PREVIEW_CHARS = 24000;
 const OVERSCAN = 12;
+// multi-MB strings inside a (visible) textarea jank the main thread hard —
+// the box is a fix-it editor, not a storage surface
+const TEXTAREA_CAP = 1_000_000;
+
+function setTa(s: string): void {
+  inTa.value = s.length > TEXTAREA_CAP ? s.slice(0, TEXTAREA_CAP) + '\n…' : s;
+}
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -337,7 +344,9 @@ function load(raw: string): void {
     viewEl.innerHTML = '';
     rawprev.hidden = false;
     rawprev.innerHTML =
-      '<span class="working-chip">formatting…</span>' + esc(raw.slice(0, PREVIEW_CHARS)) + '\n…';
+      '<span class="working-chip">formatting…</span>' +
+      esc(raw.slice(0, PREVIEW_CHARS).replace(/(.{200})/g, '$1\n')) +
+      '\n…';
     ensureWorker().postMessage({ type: 'parse', id: reqId, raw, indent });
     return;
   }
@@ -366,7 +375,7 @@ function showError(
   out.hidden = true;
   toolbar.hidden = false;
   statusbar.textContent = '';
-  inTa.value = lastRaw;
+  setTa(lastRaw);
   let loc = '';
   if (line > 0) loc = ` — line ${line}, col ${col}`;
   else if (offset >= 0) loc = ` — at char ${offset.toLocaleString('en-US')}`;
@@ -401,14 +410,20 @@ function mountScroller(v: ViewName, anchorTopVisual: number): void {
     scroller.setWidth(vm!.maxLen * charW + 72);
     scroller.setRowCount(vm!.lines);
   } else if (v === 'min') {
-    const minStr = vm!.min;
     scroller = new VScroll(viewEl, {
       rowH: ROW_H,
       overscan: OVERSCAN,
       paint: (a, b) => minHtml(vm!, a, b),
     });
+    if (vm!.min === null && parsedValue !== null) {
+      // small path: the worker holds no cache for this doc — build locally
+      // (measured 0.7–3ms on real-world files)
+      ensureMin(vm!);
+      buildMinTokens(vm!);
+    }
+    const minStr = vm!.min;
     if (minStr === null) {
-      // lazy: request from worker, paint chip meanwhile
+      // big path: lazy via worker, paint chip meanwhile
       ensureWorker().postMessage({ type: 'getMin', id: reqId });
       statusbar.textContent = 'preparing minified…';
       scroller.setWidth(0);
@@ -502,7 +517,7 @@ inTa.addEventListener('paste', (e: ClipboardEvent) => {
   if (!t) return; // let native insert fire input path
   e.preventDefault();
   clearTimeout(debounceT);
-  inTa.value = t;
+  setTa(t);
   load(t);
 });
 
@@ -748,7 +763,7 @@ async function tryClipboardAuto(): Promise<void> {
     }
     if (mode !== 'landing') return; // user acted first — never race them
     clipLoaded = true;
-    inTa.value = t;
+    setTa(t);
     load(t);
     toast('Loaded from clipboard');
   } catch {
