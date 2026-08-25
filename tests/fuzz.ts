@@ -1,10 +1,10 @@
 // Fuzz: emitJson output must be byte-identical to JSON.stringify,
-// tokens identical to tokenize(pretty), tree row count exact.
+// tokens identical to tokenize(pretty), lazy tree (flatten) row count exact.
 // Run: bun tests/fuzz.ts
 import assert from 'node:assert';
-import { emitJson, materializeLabels } from '../src/serialize';
+import { emitJson } from '../src/serialize';
 import { tokenize, T_PUNCT } from '../src/tokenizer';
-import { buildVisible } from '../src/tree';
+import { flatten, buildVisible } from '../src/tree';
 
 // deterministic xorshift
 let seed = 0x9e3779b9;
@@ -75,18 +75,11 @@ for (let it = 0; it < 500; it++) {
     if (toks[i + 1] !== T_PUNCT) ref.push(toks[i], toks[i + 1]);
   }
   assert.deepStrictEqual([...r.tokens], ref, `tokens mismatch @${it}`);
-  assert.strictEqual(r.tree.rowCount, countNodes(v), `rowCount mismatch @${it}`);
+  const ft = flatten(v);
+  assert.strictEqual(ft.rowCount, countNodes(v), `rowCount mismatch @${it}`);
   assert.strictEqual(r.lines, r.lineStarts.length, `lines mismatch @${it}`);
-  const vis = buildVisible(r.tree, new Uint8Array(r.tree.rowCount).fill(1));
-  assert.strictEqual(vis.length, r.tree.rowCount, `visible mismatch @${it}`);
-  // label materialization spot-check on every 50th doc
-  if (it % 50 === 0) {
-    materializeLabels(r.tree, r.pretty, r.tokens);
-    assert.strictEqual(r.tree.keyIdx.length, r.tree.rowCount, `keyIdx @${it}`);
-    let leafRows = 0;
-    for (let r2 = 0; r2 < r.tree.rowCount; r2++) if (r.tree.valTokIdx[r2] >= 0) leafRows++;
-    assert.strictEqual(r.tree.vals.length, leafRows, `vals @${it}`);
-  }
+  const vis = buildVisible(ft, new Uint8Array(ft.rowCount).fill(1));
+  assert.strictEqual(vis.length, ft.rowCount, `visible mismatch @${it}`);
   docs++;
 }
 

@@ -1,8 +1,17 @@
-// Fused JSON view-model builder — v4 (golfed hot core).
-// Text from NATIVE JSON.stringify; parallel ZERO-STRING length walk emits
-// tokens + line index + tree rows (interleaved stride-6 Int32Array).
-// Labels lazy: rows store token indices; materializeLabels() slices pretty.
-// Token pairs are EXACTLY tokenize(JSON.stringify(...)) — fuzz-verified.
+// Fused JSON view-model builder — v6 (closure-free hot path).
+// Text from NATIVE JSON.stringify; zero-string length walk emits tokens +
+// line index. TREE IS LAZY: flatten() rebuilds it on demand (first Tree
+// open / worker getTree) — the paste→text path never pays for tree columns.
+//
+// Measured invariants (see AGENTS.md "The floor" + bench):
+// - stringify (native) + parse (native) are the floor; the JS walk is the
+//   only optimizable slice.
+// - Captured-scope writes cost ~40% over true locals on JSC (agent bench,
+//   5.4 vs 3.9 ns/token): tk/tlen/tc/pos stay uncontextualized locals and
+//   the per-child path is FULLY INLINED — no closure calls per token/line.
+// - escLen regex fast path beats charCode loops on JSC (agent bench);
+//   scanString-over-pretty measured slower — do not reintroduce.
+// Token pairs are EXACTLY tokenize(JSON.stringify(...)) minus punct — fuzz-verified.
 import {
   T_FALSE,
   T_KEY,
@@ -11,7 +20,6 @@ import {
   T_STR,
   T_TRUE,
 } from './tokenizer';
-import type { FlatTree } from './tree';
 
 export interface EmitResult {
   pretty: string;
@@ -19,11 +27,7 @@ export interface EmitResult {
   lineStarts: Uint32Array;
   lines: number;
   maxLen: number;
-  tree: FlatTree;
 }
-
-const MAX_PREVIEW = 128;
-const STRIDE = 6; // depth, kind, keyTok, valTok, meta, subtree
 
 // escaped length of s as JSON.stringify would emit it (quotes excluded)
 // fast path: one native regex scan proves the string is escape-free (~90% of real data)
@@ -54,299 +58,249 @@ interface Frame {
   len: number;
   idx: number;
   childDepth: number;
-  rowId: number;
-  first: boolean;
 }
 
 export function emitJson(
   value: unknown,
   indent: number | '\t',
-  rawLenHint: number,
+  _rawLenHint: number,
 ): EmitResult {
   const pretty = JSON.stringify(value, null, indent);
   const indLen = typeof indent === 'number' ? indent : 1;
   const plen = pretty.length;
 
+  // ---- hot registers (true locals — never captured by closures) ----
   let pos = 0;
 
-  // ---- tokens ----
-  // Pure-local aliasing: tk/tc/tlen stay uncontextualized (register-allocated);
-  // growth goes through a pure helper, so hot pushes are plain typed-array
-  // stores with one predicted compare — no closure call, no scope loads.
-  let tc = rawLenHint / 2 > 4096 ? (rawLenHint / 2) | 0 : 4096;
+  // tokens — seed from pretty length (known now): 2 ints per token, and
+  // every token except the last is followed by >=1 non-token char, so
+  // token ints <= plen+2. Branch-free pushes (agent bench: 3.1 vs 4.0 ns).
+  const tc = plen + 16;
   let tlen = 0;
-  let tk: Int32Array<ArrayBuffer> = new Int32Array(tc);
-  const growI32 = (old: Int32Array<ArrayBuffer>): Int32Array<ArrayBuffer> => {
-    const g = new Int32Array(old.length << 1);
-    g.set(old);
-    return g;
-  };
+  const tk: Int32Array<ArrayBuffer> = new Int32Array(tc);
 
-  // ---- line index ----
-  let lcap = rawLenHint / 9 > 1024 ? (rawLenHint / 9) | 0 : 1024;
+  // line index
+  // lines: each line except the last is >=2 chars (content + '\n') —
+  // capacity proven, no growth; llen IS the line count
   let llen = 0;
-  let ls = new Uint32Array(lcap);
+  const ls = new Uint32Array((plen >> 1) + 16);
   ls[llen++] = 0;
-  let nl = 0;
   let lineStart = 0;
   let maxLen = 0;
 
-  // ---- tree rows: interleaved stride-6 ----
-  let rcap = rawLenHint / 11 > 1024 ? (rawLenHint / 11) | 0 : 1024;
-  let rowCount = 0;
-  let rk: Int32Array<ArrayBuffer> = new Int32Array(rcap * STRIDE);
-
   const isBranch = (v: unknown): boolean => v !== null && typeof v === 'object';
 
-  // capacity guards + hot pushes
-  const ensureTok = (): void => {
-    if (tlen + 2 > tc) {
-      tk = growI32(tk);
-      tc = tk.length;
-    }
-  };
-  const pushTok = (end: number, type: number): void => {
-    ensureTok();
-    tk[tlen++] = end;
-    tk[tlen++] = type;
-  };
-
-  // leaf value: advance pos over its pretty span + emit one token pair
-  const emitLeafVal = (v: unknown): void => {
-    const t = typeof v;
-    let type: number;
-    if (t === 'number') {
-      const num = v as number;
-      if (Number.isInteger(num) && num < 1e9 && num > -1e9) {
-        // arithmetic digit count — no scan, no alloc
-        let a = num < 0 ? -num : num;
-        let d = 1;
-        while (a >= 10) {
-          a = (a / 10) | 0;
-          d++;
-        }
-        pos += d + (num < 0 ? 1 : 0);
-      } else {
-        let jN = pos;
-        while (jN < plen) {
-          const cN = pretty.charCodeAt(jN);
-          if (cN === 44 || cN === 10 || cN === 125 || cN === 93) break;
-          jN++;
-        }
-        pos = jN;
-      }
-      type = T_NUM;
-    } else if (t === 'string') {
-      pos += escLen(v as string) + 2;
-      type = T_STR;
-    } else if (t === 'boolean') {
-      pos += v ? 4 : 5;
-      type = v ? T_TRUE : T_FALSE;
-    } else {
-      pos += 4;
-      type = T_NULL;
-    }
-    pushTok(pos, type);
-  };
-
-  // frame pool
+  // frame pool — pooled objects, zero alloc per push after warmup
   const framePool: Frame[] = [];
   let frameTop = 0;
-  const getFrame = (): Frame => {
-    const f = framePool[frameTop];
-    if (f !== undefined) {
-      frameTop++;
-      return f;
-    }
-    const nf: Frame = { obj: null, isArr: false, keysList: null, len: 0, idx: 0, childDepth: 0, rowId: -1, first: true };
-    framePool.push(nf);
-    frameTop++;
-    return nf;
-  };
 
-  const openContainer = (v: unknown, keyTok: number, depth: number): boolean => {
-    const isArr = Array.isArray(v);
-    if (rowCount + 1 > rcap) {
-      rk = growI32(rk);
-      rcap = rk.length / STRIDE;
-    }
-    let p = rowCount * STRIDE;
-    rk[p] = depth;
-    rk[p + 1] = isArr ? 2 : 1;
-    rk[p + 2] = keyTok;
-    rk[p + 3] = -1;
-    rk[p + 4] = 0; // meta
-    rk[p + 5] = -1; // subtree pending (branches) — leaves set below
-    const row = rowCount++;
-    pos += 1;
-    const f = getFrame();
-    f.isArr = isArr;
-    f.obj = v as Record<string, unknown>;
-    f.keysList = isArr ? null : Object.keys(v as Record<string, unknown>);
-    f.len = isArr ? (v as unknown[]).length : f.keysList!.length;
-    f.idx = 0;
-    f.childDepth = depth + 1;
-    f.rowId = row;
-    f.first = true;
-    if (f.len === 0) {
-      pos += 1;
-      rk[row * STRIDE + 5] = rowCount - row;
-      frameTop--;
-      return false;
-    }
-    return true;
-  };
-
-  let cf: Frame; // current frame register (avoids per-iteration stack peek)
-
-
-
+  let cf: Frame | undefined; // current frame register
 
   // ---- root ----
   if (!isBranch(value)) {
-    emitLeafVal(value);
-    rk[0] = 0;
-    rk[1] = 0;
-    rk[2] = -1;
-    rk[3] = (tlen >> 1) - 1; // valTok
-    rowCount = 1; // rk[4]/rk[5] via finish defaults
+    // inline emitLeafVal
+    {
+      const t = typeof value;
+      let type: number;
+      if (t === 'number') {
+        const num = value as number;
+        if (Number.isInteger(num) && num < 1e9 && num > -1e9) {
+          let a = num < 0 ? -num : num;
+          let d = 1;
+          while (a >= 10) {
+            a = (a / 10) | 0;
+            d++;
+          }
+          pos += d + (num < 0 ? 1 : 0);
+        } else {
+          let jN = pos;
+          while (jN < plen) {
+            const cN = pretty.charCodeAt(jN);
+            if (cN === 44 || cN === 10 || cN === 125 || cN === 93) break;
+            jN++;
+          }
+          pos = jN;
+        }
+        type = T_NUM;
+      } else if (t === 'string') {
+        pos += escLen(value as string) + 2;
+        type = T_STR;
+      } else if (t === 'boolean') {
+        pos += value ? 4 : 5;
+        type = value ? T_TRUE : T_FALSE;
+      } else {
+        pos += 4;
+        type = T_NULL;
+      }
+      tk[tlen++] = pos;
+      tk[tlen++] = type;
+    }
     {
       const seg = pos - lineStart;
       if (seg > maxLen) maxLen = seg;
     }
     return finish();
   }
+
+  // inline openContainer(root, depth 0)
   {
-    const pushed = openContainer(value, -1, 0);
-    if (!pushed) {
+    const isArr = Array.isArray(value);
+    pos += 1;
+    let f = framePool[frameTop];
+    if (f === undefined) {
+      f = { obj: null, isArr: false, keysList: null, len: 0, idx: 0, childDepth: 0 };
+      framePool.push(f);
+    }
+    frameTop++;
+    f.isArr = isArr;
+    f.obj = value as Record<string, unknown>;
+    f.keysList = isArr ? null : Object.keys(value as Record<string, unknown>);
+    f.len = isArr ? (value as unknown[]).length : f.keysList!.length;
+    f.idx = 0;
+    f.childDepth = 1;
+    if (f.len === 0) {
+      pos += 1;
+      frameTop--;
       {
+        const seg = pos - lineStart;
+        if (seg > maxLen) maxLen = seg;
+      }
+      return finish();
+    }
+    cf = f;
+  }
+  {
+    const d = 1;
+    {
       const seg = pos - lineStart;
       if (seg > maxLen) maxLen = seg;
     }
-      return finish();
-    }
-    cf = framePool[frameTop - 1];
-    {
-      const d = 1;
-  {
-    const seg = pos - lineStart;
-    if (seg > maxLen) maxLen = seg;
-  }
-  nl++;
-  if (llen === lcap) {
-    lcap <<= 1;
-    const g = new Uint32Array(lcap);
-    g.set(ls);
-    ls = g;
-  }
-  pos += 1; // the '\n'
-  ls[llen++] = pos;
-  lineStart = pos;
-  if (d > 0) pos += d * indLen; // indent AFTER line-start record
-    }
+    pos += 1; // the '\n'
+    ls[llen++] = pos;
+    lineStart = pos;
+    if (d > 0) pos += d * indLen; // indent AFTER line-start record
   }
 
-  // ---- iterative walk ----
+  // ---- iterative walk (closure-free per-child path) ----
   while (frameTop > 0) {
-    const f = cf;
+    const f = cf!;
     if (f.idx >= f.len) {
       {
-      const d = f.childDepth - 1;
-  {
-    const seg = pos - lineStart;
-    if (seg > maxLen) maxLen = seg;
-  }
-  nl++;
-  if (llen === lcap) {
-    lcap <<= 1;
-    const g = new Uint32Array(lcap);
-    g.set(ls);
-    ls = g;
-  }
-  pos += 1; // the '\n'
-  ls[llen++] = pos;
-  lineStart = pos;
-  if (d > 0) pos += d * indLen; // indent AFTER line-start record
-    }
+        const d = f.childDepth - 1;
+        {
+          const seg = pos - lineStart;
+          if (seg > maxLen) maxLen = seg;
+        }
+        pos += 1; // the '\n'
+        ls[llen++] = pos;
+        lineStart = pos;
+        if (d > 0) pos += d * indLen; // indent AFTER line-start record
+      }
       pos += 1;
-      rk[f.rowId * STRIDE + 5] = rowCount - f.rowId;
       frameTop--;
       cf = framePool[frameTop - 1];
       continue;
     }
 
-    if (!f.first) {
+    if (f.idx > 0) {
+      // comma precedes every child except the first (idx is pre-increment)
       pos += 1;
       {
-      const d = f.childDepth;
-  {
-    const seg = pos - lineStart;
-    if (seg > maxLen) maxLen = seg;
-  }
-  nl++;
-  if (llen === lcap) {
-    lcap <<= 1;
-    const g = new Uint32Array(lcap);
-    g.set(ls);
-    ls = g;
-  }
-  pos += 1; // the '\n'
-  ls[llen++] = pos;
-  lineStart = pos;
-  if (d > 0) pos += d * indLen; // indent AFTER line-start record
+        const d = f.childDepth;
+        {
+          const seg = pos - lineStart;
+          if (seg > maxLen) maxLen = seg;
+        }
+        pos += 1; // the '\n'
+        ls[llen++] = pos;
+        lineStart = pos;
+        if (d > 0) pos += d * indLen; // indent AFTER line-start record
+      }
     }
-    }
-    f.first = false;
 
     let child: unknown;
-    let keyTok = -1;
     if (f.isArr) {
       child = (f.obj as unknown[])[f.idx];
     } else {
       const k = (f.keysList as string[])[f.idx];
       child = (f.obj as Record<string, unknown>)[k];
-      pos += escLen(k) + 2;
-      pushTok(pos, T_KEY);
-      keyTok = (tlen >> 1) - 1;
-      pos += 2; // ': '
+      pos += escLen(k) + 2; // quoted key
+      tk[tlen++] = pos;
+      tk[tlen++] = T_KEY;
+      pos += 2; // '": '
     }
     f.idx++;
-    rk[f.rowId * STRIDE + 4]++; // meta: child count
 
     if (isBranch(child)) {
-      if (openContainer(child, keyTok, f.childDepth)) {
-        cf = framePool[frameTop - 1];
+      // inline openContainer(child, f.childDepth)
+      const isArr = Array.isArray(child);
+      pos += 1;
+      let nf = framePool[frameTop];
+      if (nf === undefined) {
+        nf = { obj: null, isArr: false, keysList: null, len: 0, idx: 0, childDepth: 0 };
+        framePool.push(nf);
+      }
+      frameTop++;
+      nf.isArr = isArr;
+      nf.obj = child as Record<string, unknown>;
+      nf.keysList = isArr ? null : Object.keys(child as Record<string, unknown>);
+      nf.len = isArr ? (child as unknown[]).length : nf.keysList!.length;
+      nf.idx = 0;
+      nf.childDepth = f.childDepth + 1;
+      if (nf.len === 0) {
+        pos += 1;
+        frameTop--;
+      } else {
+        cf = nf;
         {
-      const d = f.childDepth + 1;
-  {
-    const seg = pos - lineStart;
-    if (seg > maxLen) maxLen = seg;
-  }
-  nl++;
-  if (llen === lcap) {
-    lcap <<= 1;
-    const g = new Uint32Array(lcap);
-    g.set(ls);
-    ls = g;
-  }
-  pos += 1; // the '\n'
-  ls[llen++] = pos;
-  lineStart = pos;
-  if (d > 0) pos += d * indLen; // indent AFTER line-start record
-    }
+          const d = f.childDepth + 1;
+          {
+            const seg = pos - lineStart;
+            if (seg > maxLen) maxLen = seg;
+          }
+          pos += 1; // the '\n'
+          ls[llen++] = pos;
+          lineStart = pos;
+          if (d > 0) pos += d * indLen; // indent AFTER line-start record
+        }
+        continue;
       }
     } else {
-      emitLeafVal(child);
-      if (rowCount + 1 > rcap) {
-        rk = growI32(rk);
-        rcap = rk.length / STRIDE;
+      // inline emitLeafVal
+      const t = typeof child;
+      let type: number;
+      if (t === 'number') {
+        const num = child as number;
+        if (Number.isInteger(num) && num < 1e9 && num > -1e9) {
+          let a = num < 0 ? -num : num;
+          let d = 1;
+          while (a >= 10) {
+            a = (a / 10) | 0;
+            d++;
+          }
+          pos += d + (num < 0 ? 1 : 0);
+        } else {
+          let jN = pos;
+          while (jN < plen) {
+            const cN = pretty.charCodeAt(jN);
+            if (cN === 44 || cN === 10 || cN === 125 || cN === 93) break;
+            jN++;
+          }
+          pos = jN;
+        }
+        type = T_NUM;
+      } else if (t === 'string') {
+        pos += escLen(child as string) + 2;
+        type = T_STR;
+      } else if (t === 'boolean') {
+        pos += child ? 4 : 5;
+        type = child ? T_TRUE : T_FALSE;
+      } else {
+        pos += 4;
+        type = T_NULL;
       }
-      const p = rowCount * STRIDE;
-      rk[p] = f.childDepth;
-      rk[p + 1] = 0;
-      rk[p + 2] = keyTok;
-      rk[p + 3] = (tlen >> 1) - 1; // valTok; meta/subtree via finish defaults
-      rowCount++;
+      tk[tlen++] = pos;
+      tk[tlen++] = type;
     }
   }
 
@@ -357,90 +311,12 @@ export function emitJson(
   return finish();
 
   function finish(): EmitResult {
-    const n = rowCount;
-    const depthU = new Uint16Array(n);
-    const keyTokIdx = new Int32Array(n);
-    const valTokIdx = new Int32Array(n);
-    const meta = new Int32Array(n);
-    const subtreeRows = new Int32Array(n);
-    const kind = new Int32Array(n);
-    for (let i = 0, p = 0; i < n; i++, p += STRIDE) {
-      depthU[i] = rk[p];
-      kind[i] = rk[p + 1];
-      keyTokIdx[i] = rk[p + 2];
-      valTokIdx[i] = rk[p + 3];
-      meta[i] = rk[p + 4]; // leaves: never written → 0
-      const st = rk[p + 5];
-      subtreeRows[i] = st === -1 ? 1 : st; // leaves: -1 sentinel → 1
-    }
     return {
       pretty,
-      tokens: tlen === tk.length ? tk : tk.slice(0, tlen),
-      lineStarts: llen === ls.length ? ls : ls.slice(0, llen),
-      lines: nl + 1,
+      tokens: tk.subarray(0, tlen),
+      lineStarts: ls.subarray(0, llen),
+      lines: llen,
       maxLen,
-      tree: {
-        depth: depthU,
-        kind,
-        keyIdx: new Int32Array(0), // materialized on demand
-        valIdx: new Int32Array(0),
-        keyTokIdx,
-        valTokIdx,
-        meta,
-        subtreeRows,
-        keys: [],
-        vals: [],
-        rowCount: n,
-      },
     };
   }
-}
-
-// Materialize keys[]/vals[]/keyIdx[]/valIdx[] by slicing pretty at token spans.
-// Implied token start = previous pair end — may include layout whitespace;
-// strip it before unquoting keys / storing values.
-export function materializeLabels(t: FlatTree, pretty: string, tokens: Int32Array): void {
-  if (t.keyIdx.length === t.rowCount) return; // already done
-  const n = t.rowCount;
-  const keyIdx = new Int32Array(n).fill(-1);
-  const valIdx = new Int32Array(n).fill(-1);
-  const keyIntern = new Map<string, number>();
-  const keys: string[] = [];
-  const vals: string[] = [];
-  const spanStart = (pairIdx: number): number => (pairIdx > 0 ? tokens[(pairIdx - 1) * 2] : 0);
-  const isWs = (c: number): boolean => c === 32 || c === 9 || c === 10 || c === 13;
-  for (let r = 0; r < n; r++) {
-    const kt = t.keyTokIdx[r];
-    if (kt >= 0) {
-      let ks = pretty.slice(spanStart(kt), tokens[kt * 2]);
-      let a = 0;
-      while (a < ks.length && isWs(ks.charCodeAt(a))) a++;
-      ks = ks.slice(a + 1, -1); // strip ws + quotes
-      let id = keyIntern.get(ks);
-      if (id === undefined) {
-        id = keys.length;
-        keys.push(ks);
-        keyIntern.set(ks, id);
-      }
-      keyIdx[r] = id;
-    }
-    const vt = t.valTokIdx[r];
-    if (vt >= 0) {
-      let s = pretty.slice(spanStart(vt), tokens[vt * 2]);
-      let a = 0;
-      while (a < s.length && (isWs(s.charCodeAt(a)) || s.charCodeAt(a) === 58)) a++; // ws + ':'
-      s = s.slice(a);
-      if (s.length > MAX_PREVIEW) {
-        s = s.slice(0, MAX_PREVIEW - 1);
-        if (s.endsWith('"')) s = s.slice(0, -1);
-        s += '…"';
-      }
-      vals.push(s);
-      valIdx[r] = vals.length - 1;
-    }
-  }
-  t.keys = keys;
-  t.vals = vals;
-  t.keyIdx = keyIdx;
-  t.valIdx = valIdx;
 }
