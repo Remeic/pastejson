@@ -14,6 +14,7 @@ Breaking one is a regression even with green tests:
 - **No rope** — JSC punishes `out +=` piece-chains and closure-captured state in per-char paths at ~19ns/char (measured). Hot writers keep state as true locals; a helper closure inside the per-char path is a measured regression.
 - **Punct tokens dropped by design** — braces/colons/commas render via base `code` color, which equals the punct color. Fuzz therefore compares token pairs against `tokenize(pretty)` **filtered to non-punct**. Re-adding them re-bloats the table.
 - **lineStarts point after the `\n`, before the indent** — recording them later leaks each line's indent into the previous row: the flush-left bug. `textHtml` ends line *i* at `LS[i+1] - 1`.
+- **Diff is a lazy island** — `src/diffcore.ts` + `src/diffview.ts` load via dynamic `import()` on first Diff click. Never import them (directly or transitively) from `main.ts`'s static graph, `worker.ts`, `render.ts`, or anything on the paste path. Self-contained on purpose: own preview/intern/Myers code instead of shared helpers, so it can move to a worker without touching hot files. In the singlefile build Rollup inlines the chunk — that's fine: only trivial top-level consts evaluate at boot; all work stays behind the click. Deep-equal subtrees emit nothing; array alignment = prefix/suffix trim + Myers over interned `JSON.stringify` keys (the native floor again), D-capped with a pairwise fallback.
 
 ## Contracts (fuzz enforces, keep byte-exact)
 
