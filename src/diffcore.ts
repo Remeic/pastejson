@@ -41,6 +41,9 @@ const NEEDS_ESC = /[\\"\u0000-\u001f]/;
 // beyond it alignment falls back to pairwise — bounded, deterministic
 const KEY_BUDGET = 64 << 20;
 const MYERS_D_CAP = 2048;
+// trace-memory budget: (dCap+1) slices of w Int32s must stay ≤ 8M ints (32MB).
+// Was 8 << 23 (=64M ints = 256MB) — 8× over its own comment (audit F-04).
+export const MYERS_TRACE_BUDGET = 8 << 20;
 
 function preview(v: unknown): string {
   const t = typeof v;
@@ -119,8 +122,9 @@ function myers(
   const maxD = n + m;
   const w = 2 * maxD + 1;
   const off = maxD;
-  // trace memory bound: (d+1)*w cells ≤ 8M ints (32MB) hard stop
-  const dCap = Math.min(MYERS_D_CAP, Math.floor((8 << 23) / w), maxD);
+  // trace memory bound: (d+1)*w cells ≤ 8M ints (32MB) hard stop.
+  // -1 so (dCap+1)*w = floor(B/w)*w ≤ B exactly (audit F-04 + test)
+  const dCap = Math.min(MYERS_D_CAP, Math.floor(MYERS_TRACE_BUDGET / w) - 1, maxD);
   const v = new Int32Array(w);
   const trace: Int32Array[] = [];
   let found = -1;

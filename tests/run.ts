@@ -5,7 +5,7 @@ import { parseJson, parseInput } from '../src/parse';
 import { buildView, ensureMin } from '../src/viewmodel';
 import { flatten, buildVisible } from '../src/tree';
 import { rangeHtml } from '../src/highlight';
-import { diffJson, diffAligned, OP_ADD, OP_DEL, OP_SAME, OP_MOD, type DiffResult } from '../src/diffcore';
+import { diffJson, diffAligned, OP_ADD, OP_DEL, OP_SAME, OP_MOD, MYERS_TRACE_BUDGET, type DiffResult } from '../src/diffcore';
 import { diffHtml, sbsHtml } from '../src/diffview';
 import { treeHtml } from '../src/render';
 import { textHtml } from '../src/render';
@@ -699,6 +699,15 @@ ok('search: seeded fuzz vs ASCII-fold oracle', () => {
     const got = [...findAll(vm, q, CI).starts];
     const want = naiveCi(vm.pretty, q);
     assert.deepStrictEqual(got, want, `offsets @${it} q=${JSON.stringify(q)}`);
+  }
+});
+
+// diff: Myers trace allocation stays inside its documented 32MB budget
+ok('diff: myers trace bound ≤ 8M ints at extreme widths', () => {
+  for (const w of [1, 3, 4097, 40001, 2_000_001]) {
+    const dCap = Math.min(2048, Math.floor(MYERS_TRACE_BUDGET / w));
+    const bytes = (dCap + 1) * w * 4;
+    assert.ok(bytes <= 32 << 20, `w=${w} allocates ${bytes}`);
   }
 });
 
