@@ -14,11 +14,11 @@ cat >> /tmp/pj-dom/index.html <<'EOF'
 <script>
   addEventListener('load', () => {
     const out = [];
-    for (const id of ['link-privacy', 'foot']) {
-      const el = document.getElementById(id) ?? document.querySelector('#foot a[href="/about"]');
+    for (const sel of ['#foot a[href="/privacy"]', '#foot a[href="/about"]']) {
+      const el = document.querySelector(sel);
       const r = el.getBoundingClientRect();
       const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-      out.push(id + '=' + (hit === el || el.contains(hit) ? 'OK' : 'BLOCKED_BY_' + (hit.id || hit.tagName)));
+      out.push(sel + '=' + (hit === el || el.contains(hit) ? 'OK' : 'BLOCKED_BY_' + (hit.id || hit.tagName)));
     }
     const d = document.createElement('pre');
     d.id = 'dom-probe';

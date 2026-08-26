@@ -275,14 +275,6 @@ function exitEdit(): void {
   load(v); // errors land in error mode, caret at offset — the fix-it loop
 }
 
-// ---------- legal (lazy island orchestration) ----------
-let legalMod: typeof import('./legal') | null = null;
-$('link-privacy').addEventListener('click', async (e) => {
-  e.preventDefault();
-  if (!legalMod) legalMod = await import('./legal');
-  legalMod.openLegal();
-});
-
 // ---------- search (lazy island orchestration) ----------
 async function ensureSearchMod(): Promise<typeof import('./search')> {
   if (!searchMod) searchMod = await import('./search');
@@ -895,10 +887,9 @@ function resetToLanding(): void {
   requestAnimationFrame(() => inTa.focus());
 }
 
-// Esc = close legal, else close diff panel, else close search, else leave diff, else clear
+// Esc = close diff panel, else close search, else leave diff, else clear
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  if (legalMod?.legalOpen) return legalMod.closeLegal();
   if (panelOpen) return closeDiffPanel();
   if (searchOpen) return closeSearch();
   if (curView === 'diff') return exitDiff();
@@ -1039,9 +1030,9 @@ requestAnimationFrame(() => setTimeout(() => void tryClipboardAuto(), 0));
 
 // every user activation retries — Firefox/Safari need the gesture for their
 // paste prompt; once allowed, the permission persists for future visits.
-// Gestures on interactive elements (links, buttons, inputs, legal overlay)
-// are NOT paste intents — stealing them broke footer navigation.
-const PASTE_STEAL_SKIP = 'a, button, select, input, textarea, #legal';
+// Gestures on interactive elements (links, buttons, inputs) are NOT paste
+// intents — stealing them broke footer navigation.
+const PASTE_STEAL_SKIP = 'a, button, select, input, textarea';
 const clipRetry = (e: Event): void => {
   if (e.target instanceof Element && e.target.closest(PASTE_STEAL_SKIP)) return;
   if (!clipLoaded && mode === 'landing') void tryClipboardAuto();
