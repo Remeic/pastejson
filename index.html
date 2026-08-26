@@ -65,6 +65,7 @@
         </select>
       </label>
       <span class="spacer"></span>
+      <button id="btn-find" title="Find (⌘F / Ctrl+F)">Find</button>
       <button id="btn-copyp">Copy formatted</button>
       <button id="btn-copym">Copy minified</button>
     </div>
@@ -90,6 +91,22 @@
 
     <main id="out" hidden>
       <pre id="rawprev" hidden></pre>
+      <div id="searchbar" hidden>
+        <input
+          id="search-in"
+          spellcheck="false"
+          autocomplete="off"
+          autocapitalize="off"
+          placeholder="find"
+          aria-label="Search in JSON"
+        />
+        <span id="search-count" aria-live="polite"></span>
+        <button id="btn-search-case" title="Match case" aria-label="Match case" aria-pressed="false">Aa</button>
+        <button id="btn-search-re" title="Regular expression" aria-label="Regular expression" aria-pressed="false">.*</button>
+        <button id="btn-search-prev" title="Previous (Shift+Enter)" aria-label="Previous match">↑</button>
+        <button id="btn-search-next" title="Next (Enter)" aria-label="Next match">↓</button>
+        <button id="btn-search-close" title="Close (Esc)" aria-label="Close search">✕</button>
+      </div>
       <div id="mainrow">
         <div id="view"></div>
         <aside id="diffpanel" hidden>
