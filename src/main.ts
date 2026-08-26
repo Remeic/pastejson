@@ -43,7 +43,7 @@ const dropOverlay = $('drop-overlay');
 
 // ---------- state ----------
 type ViewName = 'text' | 'tree' | 'min' | 'diff';
-type Mode = 'landing' | 'working' | 'error' | 'loaded';
+type Mode = 'landing' | 'working' | 'error' | 'loaded' | 'editing';
 
 let vm: ViewModel | null = null;
 let ft: FlatTree | null = null;
@@ -237,6 +237,27 @@ function exitDiff(): void {
   syncSeg('text');
   mountScroller('text', 0);
   statusbar.textContent = '';
+}
+
+// ---------- edit (back to the fix-it textarea, content kept) ----------
+function enterEdit(): void {
+  if (mode !== 'loaded' || !vm) return;
+  closeSearch();
+  closeDiffPanel();
+  out.hidden = true;
+  setTa(lastRaw);
+  setMode('editing');
+  inTa.focus();
+  inTa.setSelectionRange(1e9, 1e9); // clamps to end
+}
+
+// Esc without edits → straight back to the view; vm/scroller never torn down.
+// vm is never null in editing mode: enterEdit guards, only resetToLanding nulls it.
+function exitEdit(): void {
+  if (mode !== 'editing') return;
+  inTa.value = '';
+  out.hidden = false;
+  setMode('loaded');
 }
 
 // ---------- legal (lazy island orchestration) ----------
@@ -680,6 +701,8 @@ inTa.addEventListener('input', () => {
   debounceT = window.setTimeout(() => {
     const v = inTa.value;
     if (!v || /^\s*$/.test(v)) return resetToLanding();
+    // editing with unchanged content → just restore the view, skip re-parse
+    if (mode === 'editing' && v === lastRaw) return exitEdit();
     load(v);
   }, 140);
 });
@@ -717,6 +740,7 @@ toolbar.addEventListener('click', (e) => {
   const el = (e.target as HTMLElement).closest('button');
   if (!el) return;
   if (el.id === 'btn-new') return resetToLanding();
+  if (el.id === 'btn-edit') return enterEdit();
   if (el.id === 'btn-copyp') return copyText(vm?.pretty ?? '');
   if (el.id === 'btn-copym') {
     if (!vm) return;
@@ -862,6 +886,7 @@ document.addEventListener('keydown', (e) => {
   if (panelOpen) return closeDiffPanel();
   if (searchOpen) return closeSearch();
   if (curView === 'diff') return exitDiff();
+  if (mode === 'editing') return exitEdit();
   if (mode !== 'landing') resetToLanding();
 });
 
@@ -997,8 +1022,12 @@ async function tryClipboardAuto(): Promise<void> {
 requestAnimationFrame(() => setTimeout(() => void tryClipboardAuto(), 0));
 
 // every user activation retries — Firefox/Safari need the gesture for their
-// paste prompt; once allowed, the permission persists for future visits
-const clipRetry = (): void => {
+// paste prompt; once allowed, the permission persists for future visits.
+// Gestures on interactive elements (links, buttons, inputs, legal overlay)
+// are NOT paste intents — stealing them broke footer navigation.
+const PASTE_STEAL_SKIP = 'a, button, select, input, textarea, #legal';
+const clipRetry = (e: Event): void => {
+  if (e.target instanceof Element && e.target.closest(PASTE_STEAL_SKIP)) return;
   if (!clipLoaded && mode === 'landing') void tryClipboardAuto();
 };
 document.addEventListener('pointerdown', clipRetry);
