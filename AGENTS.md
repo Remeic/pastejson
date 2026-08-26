@@ -37,4 +37,4 @@ Breaking one is a regression even with green tests:
 
 ## Flow
 
-Stacked branches, one concern per commit, PR per stage, base-first merges. `wrangler.jsonc` drives the CF Pages deploy (build `bun run build`, output `dist`).
+Stacked branches, one concern per commit, PR per stage, base-first merges. `vercel.json` drives the Vercel deploy (build `bun run build`, output `dist`).

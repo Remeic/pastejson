@@ -44,4 +44,4 @@ bun run build    # typecheck + single-file dist/
 
 ## Deploy
 
-Single static file → Cloudflare Pages (`wrangler.jsonc`): build command `bun run build`, output `dist`.
+Single static file → Vercel (`vercel.json`): build command `bun run build`, output `dist`.
