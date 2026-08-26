@@ -306,7 +306,9 @@ i { font-style: normal; }
 
 /* footer links (bottom-right) + legal island */
 #foot {
-  position: fixed; right: 14px; bottom: 10px; z-index: 30;
+  /* above the landing paste surface (#in, z-40, fixed inset-0) or links are
+     unclickable — the textarea hit-tests every click first */
+  position: fixed; right: 14px; bottom: 10px; z-index: 45;
   display: flex; gap: 12px; align-items: baseline;
   font-size: 11px; color: var(--muted); user-select: none;
 }
