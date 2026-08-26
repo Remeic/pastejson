@@ -122,8 +122,9 @@ function myers(
   const maxD = n + m;
   const w = 2 * maxD + 1;
   const off = maxD;
-  // trace memory bound: (d+1)*w cells ≤ 8M ints (32MB) hard stop
-  const dCap = Math.min(MYERS_D_CAP, Math.floor(MYERS_TRACE_BUDGET / w), maxD);
+  // trace memory bound: (d+1)*w cells ≤ 8M ints (32MB) hard stop.
+  // -1 so (dCap+1)*w = floor(B/w)*w ≤ B exactly (audit F-04 + test)
+  const dCap = Math.min(MYERS_D_CAP, Math.floor(MYERS_TRACE_BUDGET / w) - 1, maxD);
   const v = new Int32Array(w);
   const trace: Int32Array[] = [];
   let found = -1;
