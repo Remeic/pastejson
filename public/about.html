@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>About – pastejson</title>
+    <meta name="description" content="pastejson: a free, 100% local JSON formatter built for speed. Multi-MB documents in milliseconds, nothing leaves your browser. By Giulio Fagioli." />
+    <link rel="canonical" href="https://json.justgiulio.dev/about" />
+    <style>
+      :root { color-scheme: light dark;
+        --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      @media (prefers-color-scheme: dark) {
+        :root { --bg:#0b0e14; --fg:#d6deeb; --muted:#5c6a7e; --line:#1c2532; --panel:#10151d; --accent:#4cc38a; } }
+      @media (prefers-color-scheme: light) {
+        :root { --bg:#ffffff; --fg:#24292f; --muted:#57606a; --line:#eaeef2; --panel:#f6f8fa; --accent:#1a7f37; } }
+      * { box-sizing: border-box; }
+      body { margin:0; background:var(--bg); color:var(--fg); font-family:var(--sans); line-height:1.6; padding:48px 20px 80px; }
+      main { max-width:680px; margin:0 auto; }
+      h1,h2 { line-height:1.25; }
+      h1 { font-size:28px; margin:0 0 4px; letter-spacing:-0.02em; }
+      h2 { font-size:17px; margin:32px 0 8px; color:var(--accent); }
+      p, li { font-size:14px; opacity:.92; margin:8px 0; }
+      ul { padding-left:20px; }
+      a { color:var(--accent); }
+      .back { display:inline-block; margin-bottom:28px; font-family:var(--mono); font-size:13px; color:var(--muted); text-decoration:none; }
+      .back:hover { color:var(--accent); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <a class="back" href="/">&larr; back to pastejson</a>
+      <h1>About pastejson</h1>
+      <p>pastejson (<a href="https://json.justgiulio.dev">json.justgiulio.dev</a>) is a free, single-purpose JSON tool: paste JSON, see it formatted instantly. It handles multi-megabyte documents in milliseconds because it is built directly on the browser's native JSON parser with a hand-tuned rendering pipeline — no frameworks on the hot path, no network round-trips, no server.</p>
+
+      <h2>Principles</h2>
+      <ul>
+        <li><strong>100% local.</strong> Your JSON never leaves the browser. No uploads, no storage, no telemetry.</li>
+        <li><strong>Speed is the product.</strong> The 5&nbsp;MB paste pipeline completes in ~30&nbsp;ms on commodity hardware, measured on every commit by an automated performance gate.</li>
+        <li><strong>One file.</strong> The whole app ships as a single ~74&nbsp;KB HTML file. It loads fast, works offline after first load, and asks for nothing.</li>
+      </ul>
+
+      <h2>Features</h2>
+      <p>Pretty-print with configurable indent, collapsible tree view, minification, diff between two documents (focused changes or side by side), regex find, JSONL support.</p>
+
+      <h2>The author</h2>
+      <p>Built by Giulio Fagioli — <a href="https://justgiulio.dev" target="_blank" rel="noopener">justgiulio.dev</a>. Source code: <a href="https://github.com/Remeic/pastejson" target="_blank" rel="noopener">github.com/Remeic/pastejson</a>.</p>
+    </main>
+  </body>
+</html>

@@ -1,7 +1,7 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://pastejson.com/sitemap.xml
+Sitemap: https://json.justgiulio.dev/sitemap.xml
 
 User-agent: GPTBot
 Allow: /

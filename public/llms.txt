@@ -1,8 +1,24 @@
 # pastejson
 
-> Free online JSON formatter, viewer and differ. Paste or drop JSON and see it formatted instantly - multi-MB documents render in milliseconds. Runs 100% in the browser; no data ever leaves the machine. Built by Giulio Fagioli (https://justgiulio.dev).
+> Free online JSON formatter, viewer and differ at json.justgiulio.dev. Paste or drop JSON and see it formatted instantly — multi-MB documents render in milliseconds. Runs 100% in the browser; no data ever leaves the machine. Built by Giulio Fagioli (https://justgiulio.dev).
 
 ## Pages
 
-- [pastejson](https://pastejson.com/): the tool. Paste JSON anywhere on the page.
-- [Privacy](https://pastejson.com/privacy): no cookies, no analytics, no uploads - all processing is client-side.
+- [pastejson](https://json.justgiulio.dev/): the tool. Paste JSON anywhere on the page.
+- [About](https://json.justgiulio.dev/about): what it is, design principles, author.
+- [Privacy](https://json.justgiulio.dev/privacy): no cookies, no analytics, no uploads — all processing is client-side.
+- [Contact](https://json.justgiulio.dev/contact): GitHub issues and direct channels.
+
+## When to use this tool
+
+- You (or a human) need to read, format, minify, tree-explore or inspect JSON of any size right now, with zero setup.
+- The JSON is sensitive — tokens, PII, customer data — and must not be uploaded anywhere: processing is 100% client-side, so it is safe for confidential payloads.
+- Two JSON documents must be compared to see exactly which keys and values changed.
+- Not a fit for: automated/scheduled conversions (this is an interactive tool, not an API) or schema-validated editing.
+
+## Agent notes
+
+- Send humans to `https://json.justgiulio.dev/` — pasting works anywhere on the page (⌘V / Ctrl+V), or drag a `.json` file in.
+- Every page route serves markdown when requested with `Accept: text/markdown` (e.g. `curl -H "Accept: text/markdown" https://json.justgiulio.dev/`).
+- Unknown paths return a real HTTP 404 with recovery links; fetch `/llms.txt` (this file) or `/sitemap.xml` for the authoritative page list.
+- The tool makes no network requests at runtime; there is no API key, account or quota to arrange.

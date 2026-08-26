@@ -1,0 +1,64 @@
+<!doctype html>
+<!-- OG card source of truth. Regenerate: bash scripts/gen-og.sh -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      * { margin: 0; box-sizing: border-box; }
+      body {
+        width: 1200px; height: 630px; overflow: hidden;
+        background: #0b0e14; color: #d6deeb;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        display: flex; flex-direction: column; justify-content: center; padding: 0 96px;
+        position: relative;
+      }
+      .glow {
+        position: absolute; width: 720px; height: 720px; right: -220px; top: -260px;
+        background: radial-gradient(circle, rgb(76 195 138 / 0.14) 0%, transparent 62%);
+      }
+      .grid {
+        position: absolute; inset: 0; opacity: 0.5;
+        background-image:
+          linear-gradient(rgb(28 37 50 / 0.55) 1px, transparent 1px),
+          linear-gradient(90deg, rgb(28 37 50 / 0.55) 1px, transparent 1px);
+        background-size: 64px 64px;
+      }
+      .logo { display: flex; align-items: center; gap: 26px; position: relative; }
+      svg { flex: none; }
+      h1 { font-size: 118px; font-weight: 700; letter-spacing: -0.03em; color: #d6deeb; }
+      h1 b { color: #4cc38a; font-weight: 700; }
+      .tag {
+        margin-top: 34px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        font-size: 40px; font-weight: 600; letter-spacing: -0.01em; color: #d6deeb; position: relative;
+      }
+      .pillrow { margin-top: 38px; display: flex; gap: 18px; position: relative; }
+      .pill {
+        font-size: 24px; color: #4cc38a; border: 2px solid rgb(76 195 138 / 0.4);
+        background: rgb(76 195 138 / 0.08); padding: 10px 26px; border-radius: 999px; letter-spacing: 0.02em;
+      }
+      .url {
+        position: absolute; right: 64px; bottom: 48px; font-size: 26px; color: #5c6a7e;
+      }
+      .url b { color: #8b98ab; font-weight: 500; }
+    </style>
+  </head>
+  <body>
+    <div class="grid"></div>
+    <div class="glow"></div>
+    <div class="logo">
+      <svg width="150" height="150" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+        <rect width="64" height="64" rx="14" fill="#10151d" stroke="#1c2532" stroke-width="1"/>
+        <path d="M24 14c-7 0-7 7-7 9s0 9-7 9c7 0 7 7 7 9s0 9 7 9" fill="none" stroke="#4cc38a" stroke-width="6" stroke-linecap="round"/>
+        <path d="M40 14c7 0 7 7 7 9s0 9 7 9c-7 0-7 7-7 9s0 9-7 9" fill="none" stroke="#4cc38a" stroke-width="6" stroke-linecap="round"/>
+      </svg>
+      <h1><b>paste</b>json</h1>
+    </div>
+    <p class="tag">Paste JSON. See it formatted. Instantly.</p>
+    <div class="pillrow">
+      <span class="pill">⚡ 5 MB in ~20 ms</span>
+      <span class="pill">100% local</span>
+      <span class="pill">diff · tree · minify</span>
+    </div>
+    <div class="url"><b>json.justgiulio.dev</b></div>
+  </body>
+</html>
