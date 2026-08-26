@@ -175,6 +175,8 @@ function getLeftValue(): unknown {
 
 async function runDiff(rawB: string): Promise<void> {
   const mod = await ensureDiffMod();
+  // state may have moved during the lazy import (reset to landing)
+  if (!vm || mode !== 'loaded') return;
   const rb = parseInput(rawB);
   if (rb.kind === 'error') {
     dpMsg.innerHTML = `<b>Invalid JSON B</b> — ${esc(rb.message)}`;
@@ -183,6 +185,7 @@ async function runDiff(rawB: string): Promise<void> {
   statusbar.textContent = 'diffing…';
   dpStatus.textContent = '…';
   await new Promise((r) => setTimeout(r, 0)); // let the chip paint first
+  if (!vm || mode !== 'loaded') return; // reset landed during the paint yield
   const t0 = performance.now();
   const left = getLeftValue();
   const res = mod.diffJson(left, rb.value);
@@ -209,6 +212,7 @@ async function setDiffMode(sbs: boolean): Promise<void> {
     statusbar.textContent = 'building side-by-side…';
     dpStatus.textContent = '…';
     await new Promise((r) => setTimeout(r, 0));
+    if (!vm || mode !== 'loaded' || curView !== 'diff') return; // reset during yield
     const t0 = performance.now();
     alignedRes = mod.diffAligned(getLeftValue(), lastBVal);
     const note = `side-by-side built in ${Math.round(performance.now() - t0)} ms`;

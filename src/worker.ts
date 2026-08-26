@@ -120,10 +120,12 @@ self.onmessage = (e: MessageEvent<InMsg>): void => {
       if (vm === null) return;
       const min = ensureMin(vm);
       buildMinTokens(vm); // ensureMin inside is now a cache hit
-      wself.postMessage(
-        { id: m.id, type: 'min', min, tokMBuf: vm.tokM!.buffer },
-        [vm.tokM!.buffer] as unknown as Transferable[],
-      );
+      const buf = vm.tokM!.buffer;
+      vm.tokM = null; // buffer is transferred → detached; null the cache so a
+      // re-request re-tokenizes instead of posting a dead buffer (DataCloneError)
+      wself.postMessage({ id: m.id, type: 'min', min, tokMBuf: buf }, [
+        buf,
+      ] as unknown as Transferable[]);
       return;
     }
   }
