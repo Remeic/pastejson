@@ -14,6 +14,7 @@ import {
 import { esc } from './highlight';
 import PJWorker from './worker?worker&inline';
 import type { AlignedResult, DiffResult } from './diffview';
+import type { SearchState } from './search';
 
 const ROW_H = 20;
 const WORKER_THRESHOLD = 256 * 1024;
@@ -70,6 +71,18 @@ const diffTa = $<HTMLTextAreaElement>('diff-in');
 const diffPanel = $('diffpanel');
 const dpStatus = $('dp-status');
 const dpMsg = $('dp-msg');
+
+// search island state (module code loads lazily; see openSearch)
+let searchMod: typeof import('./search') | null = null;
+let searchSt: SearchState | null = null;
+let searchOpen = false;
+let searchCi = false; // match case (session pref)
+let searchRe = false; // query is regex
+const searchbar = $('searchbar');
+const searchIn = $<HTMLInputElement>('search-in');
+const searchCount = $('search-count');
+const btnSearchCase = $('btn-search-case');
+const btnSearchRe = $('btn-search-re');
 
 // ---------- char width probe (for h-scroll width estimate) ----------
 let charW = 7.8;
@@ -229,6 +242,113 @@ function exitDiff(): void {
   statusbar.textContent = '';
 }
 
+// ---------- search (lazy island orchestration) ----------
+async function ensureSearchMod(): Promise<typeof import('./search')> {
+  if (!searchMod) searchMod = await import('./search');
+  return searchMod;
+}
+
+function updSearchCount(): void {
+  const st = searchSt;
+  searchCount.classList.remove('bad');
+  if (!st) {
+    searchCount.textContent = '';
+    return;
+  }
+  if (st.bad) {
+    searchCount.textContent = 'bad pattern';
+    searchCount.classList.add('bad');
+    return;
+  }
+  const treeMode = curView === 'tree' && st.tree !== null;
+  const n = treeMode ? st.tree!.visCount : st.starts.length;
+  if (n === 0) {
+    searchCount.textContent = 'no hits';
+    return;
+  }
+  const notes = [
+    treeMode ? '' : st.ms < 1 ? '<1 ms' : `${Math.round(st.ms)} ms`,
+    st.partial ? 'stopped' : '',
+  ].filter(Boolean).join(' · ');
+  searchCount.textContent =
+    `${st.cur + 1} / ${n.toLocaleString('en-US')}${notes ? ' · ' + notes : ''}`;
+}
+
+function gotoMatch(st: SearchState, k: number): void {
+  const treeNav = curView === 'tree' && st.tree !== null;
+  const n = treeNav ? st.tree!.visCount : st.starts.length;
+  if (n === 0) return;
+  st.cur = ((k % n) + n) % n;
+  updSearchCount();
+  if (!scroller) return;
+  if (treeNav) {
+    const t = st.tree!;
+    const vi = t.pos[t.visNodeIds[st.cur]];
+    const target = Math.max(0, vi * ROW_H - scroller.host.clientHeight / 2 + ROW_H / 2);
+    // scroll change paints via its own event; same-window flips need a kick
+    if (scroller.host.scrollTop !== target) scroller.host.scrollTop = target;
+    else scroller.repaint();
+  } else if (curView === 'text' && vm) {
+    const line = searchMod!.lineOf(vm.lineStarts, st.starts[st.cur]);
+    const target = Math.max(0, line * ROW_H - scroller.host.clientHeight / 2 + ROW_H / 2);
+    if (scroller.host.scrollTop !== target) scroller.host.scrollTop = target;
+    else scroller.repaint();
+  }
+}
+
+function runQuery(): void {
+  if (!vm || !searchMod) return;
+  const q = searchIn.value;
+  if (!q) {
+    searchSt = null;
+    scroller?.repaint();
+    updSearchCount();
+    return;
+  }
+  searchSt = searchMod.findAll(vm, q, { ci: searchCi, re: searchRe });
+  if (curView === 'tree' && ft && searchSt.bad === '')
+    searchMod.attachTree(searchSt, ft, visibleRows);
+  if (curView === 'text') scroller?.repaint(); // window may be unchanged — marks must appear
+  else if (curView === 'tree' && searchSt.tree) scroller?.repaint();
+  if (searchSt.bad === '' && searchSt.cur >= 0) gotoMatch(searchSt, 0);
+  else updSearchCount();
+}
+
+async function openSearch(): Promise<void> {
+  if (mode !== 'loaded' || !vm || curView === 'diff') return;
+  if (!searchOpen) {
+    searchOpen = true;
+    searchbar.hidden = false;
+  }
+  const mod = await ensureSearchMod();
+  // text + tree take live marks; anything else lands on Text
+  if (curView !== 'text' && curView !== 'tree') {
+    curView = 'text';
+    syncSeg('text');
+    statusbar.textContent = '';
+    mountScroller('text', -1);
+  } else if (curView === 'tree' && ft && searchSt && !searchSt.tree) {
+    mod.attachTree(searchSt, ft, visibleRows);
+    scroller?.repaint();
+  } else {
+    scroller?.repaint(); // painter closure adapts via flags — repaint is enough
+  }
+  updSearchCount();
+  requestAnimationFrame(() => {
+    searchIn.focus();
+    searchIn.select();
+  });
+}
+
+function closeSearch(): void {
+  if (!searchOpen) return;
+  searchOpen = false;
+  searchSt = null;
+  searchbar.hidden = true;
+  if (curView === 'text' || curView === 'tree') scroller?.repaint();
+}
+
+
 // ---------- worker ----------
 let worker: Worker | null = null;
 function ensureWorker(): Worker {
@@ -286,9 +406,15 @@ function ensureWorker(): Worker {
       };
       expanded = new Uint8Array(ft.rowCount).fill(1);
       visibleRows = buildVisible(ft, expanded);
+      // search bar open → build hit tables now that columns exist
+      if (searchOpen && searchSt && searchMod && !searchSt.tree && !searchSt.bad) {
+        searchMod.attachTree(searchSt, ft, visibleRows);
+        updSearchCount();
+      }
       if (mode === 'loaded' && curView === 'tree' && scroller) {
         statusbar.textContent = `${ft.rowCount.toLocaleString('en-US')} nodes`;
         scroller.setRowCount(visibleRows.length);
+        if (searchSt?.tree && searchOpen) scroller.repaint();
       }
       return;
     }
@@ -340,6 +466,7 @@ function load(raw: string): void {
   diffRes = null; // new doc invalidates any diff
   alignedRes = null;
   lastBVal = null;
+  closeSearch(); // offsets are doc-scoped — fresh doc, fresh search
   if (panelOpen) dpStatus.textContent = 'doc changed — press Diff';
   if (curView === 'diff') {
     curView = 'text';
@@ -414,7 +541,12 @@ function mountScroller(v: ViewName, anchorTopVisual: number): void {
     scroller = new VScroll(viewEl, {
       rowH: ROW_H,
       overscan: OVERSCAN,
-      paint: (a, b) => textHtml(vm!, a, b),
+      // search-active branch costs two falsy checks per WINDOW paint —
+      // zero paste-path impact (flags only flip on explicit user action)
+      paint: (a, b) =>
+        searchOpen && searchSt && searchMod
+          ? searchMod.rowHtml(vm!, searchSt, a, b)
+          : textHtml(vm!, a, b),
     });
     scroller.setWidth(vm!.maxLen * charW + 72);
     scroller.setRowCount(vm!.lines);
@@ -471,11 +603,17 @@ function mountScroller(v: ViewName, anchorTopVisual: number): void {
         statusbar.textContent = 'building tree…';
       }
     }
+    // bar open + fresh query → tree hit tables before first paint
+    if (ft && searchOpen && searchSt && searchMod && !searchSt.tree && !searchSt.bad)
+      searchMod.attachTree(searchSt, ft, visibleRows);
     const visNow = visibleRows;
     scroller = new VScroll(viewEl, {
       rowH: ROW_H,
       overscan: OVERSCAN,
-      paint: (a, b) => treeHtml(ft!, expanded!, visibleRows!, a, b),
+      paint: (a, b) =>
+        searchOpen && searchSt && searchMod && searchSt.tree
+          ? searchMod.treeRowHtml(ft!, expanded!, visibleRows!, searchSt, a, b)
+          : treeHtml(ft!, expanded!, visibleRows!, a, b),
     });
     scroller.setWidth(Math.max(600, Math.min(20000, vm!.maxLen * charW * 0.4)));
     scroller.setRowCount(visNow ? visNow.length : 0);
@@ -607,6 +745,8 @@ toolbar.addEventListener('click', (e) => {
     const frac = scroller ? scroller.host.scrollTop / Math.max(1, scroller.host.scrollHeight) : 0;
     mountScroller(v, -1);
     if (scroller) scroller.host.scrollTop = frac * scroller.host.scrollHeight;
+    // match counts are view-scoped (text offsets vs visible nodes)
+    if (searchOpen) updSearchCount();
   }
 });
 
@@ -624,6 +764,11 @@ viewEl.addEventListener('click', (e) => {
   const anchorNode = vis[Math.min(topVis, vis.length - 1)] ?? n;
   exp[n] ^= 1;
   visibleRows = buildVisible(ftL, exp);
+  // bar open → visible match sequence changed; keep marks + nav in sync
+  if (searchOpen && searchSt?.tree && searchMod) {
+    searchMod.refreshTree(searchSt, ftL, visibleRows);
+    updSearchCount();
+  }
   let newTop = 0;
   for (let i = 0; i < visibleRows.length; i++) {
     if (visibleRows[i] === anchorNode) {
@@ -633,6 +778,7 @@ viewEl.addEventListener('click', (e) => {
   }
   sc.setRowCount(visibleRows.length);
   sc.host.scrollTop = newTop * ROW_H;
+  if (searchSt?.tree && searchOpen && searchMod) sc.repaint();
 });
 
 // indent change
@@ -641,6 +787,7 @@ $<HTMLSelectElement>('sel-indent').addEventListener('change', (e) => {
   indent = v === 'tab' ? '\t' : Number(v);
   if (!vm) return;
   reqId++;
+  closeSearch(); // pretty rebuilt — offsets shifted
   if (parsedValue !== null) {
     const t0 = performance.now();
     vm = buildView(parsedValue, indent, bytesIn);
@@ -689,6 +836,7 @@ function resetToLanding(): void {
   viewTag.hidden = true;
   lastBVal = null;
   curView = 'text';
+  closeSearch();
   closeDiffPanel();
   scroller?.destroy();
   scroller = null;
@@ -703,12 +851,23 @@ function resetToLanding(): void {
   requestAnimationFrame(() => inTa.focus());
 }
 
-// Esc = close diff panel, else leave diff, else clear
+// Esc = close diff panel, else close search, else leave diff, else clear
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (panelOpen) return closeDiffPanel();
+  if (searchOpen) return closeSearch();
   if (curView === 'diff') return exitDiff();
   if (mode !== 'landing') resetToLanding();
+});
+
+// ⌘F / Ctrl+F = find in document (loaded mode only; diff keeps browser find)
+document.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+    if (mode === 'loaded' && curView !== 'diff') {
+      e.preventDefault();
+      void openSearch();
+    }
+  }
 });
 
 // diff panel controls
@@ -736,6 +895,43 @@ $('btn-diff-cancel').addEventListener('click', () => {
 $('btn-dp-close').addEventListener('click', closeDiffPanel);
 $('btn-dp-focus').addEventListener('click', () => void setDiffMode(false));
 $('btn-dp-sbs').addEventListener('click', () => void setDiffMode(true));
+
+// search controls
+$('btn-find').addEventListener('click', () => void openSearch());
+function syncSearchToggles(): void {
+  btnSearchCase.classList.toggle('on', searchCi);
+  btnSearchCase.setAttribute('aria-pressed', String(searchCi));
+  btnSearchRe.classList.toggle('on', searchRe);
+  btnSearchRe.setAttribute('aria-pressed', String(searchRe));
+}
+btnSearchCase.addEventListener('click', () => {
+  searchCi = !searchCi;
+  syncSearchToggles();
+  runQuery();
+});
+btnSearchRe.addEventListener('click', () => {
+  searchRe = !searchRe;
+  syncSearchToggles();
+  runQuery();
+});
+searchIn.addEventListener('input', runQuery);
+searchIn.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    if (searchSt && searchSt.starts.length > 0)
+      gotoMatch(searchSt, searchSt.cur + (e.shiftKey ? -1 : 1));
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    closeSearch();
+  }
+});
+$('btn-search-prev').addEventListener('click', () => {
+  if (searchSt && searchSt.starts.length > 0) gotoMatch(searchSt, searchSt.cur - 1);
+});
+$('btn-search-next').addEventListener('click', () => {
+  if (searchSt && searchSt.starts.length > 0) gotoMatch(searchSt, searchSt.cur + 1);
+});
+$('btn-search-close').addEventListener('click', closeSearch);
 
 // ---------- clipboard auto-load (best effort, zero main-thread cost) ----------
 // Browser reality:

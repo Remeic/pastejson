@@ -6,6 +6,7 @@
 import { buildView, buildMinTokens } from '../src/viewmodel';
 import { flatten, buildVisible } from '../src/tree';
 import { rangeHtml } from '../src/highlight';
+import { findAll } from '../src/search';
 import { performance } from 'node:perf_hooks';
 
 function gen(rows: number): Record<string, unknown> {
@@ -71,6 +72,15 @@ for (let run = 0; run < 7; run++) {
     const t2 = performance.now();
     buildMinTokens(vm);
     console.log(`lazy min+tokens (on demand): ${(performance.now() - t2).toFixed(1)} ms`);
+    // search island: first query pays the one-time lowercase fold + find-all
+    const t3 = performance.now();
+    const st = findAll(vm, 'Milano', { ci: true, re: false });
+    console.log(
+      `lazy search fold+findAll (on demand): ${(performance.now() - t3).toFixed(1)} ms, hits ${st.starts.length}`,
+    );
+    const t4 = performance.now();
+    findAll(vm, 'g-12345', { ci: true, re: false });
+    console.log(`repeat query (fold cached): ${(performance.now() - t4).toFixed(1)} ms`);
   }
 }
 

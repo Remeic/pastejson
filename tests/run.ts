@@ -8,6 +8,17 @@ import { rangeHtml } from '../src/highlight';
 import { diffJson, diffAligned, OP_ADD, OP_DEL, OP_SAME, OP_MOD, type DiffResult } from '../src/diffcore';
 import { diffHtml, sbsHtml } from '../src/diffview';
 import { treeHtml } from '../src/render';
+import { textHtml } from '../src/render';
+import {
+  findAll,
+  lineOf,
+  rowHtml,
+  treeRowHtml,
+  attachTree,
+  refreshTree,
+  type SearchOpts,
+  type TreeHits,
+} from '../src/search';
 
 let passed = 0;
 function ok(name: string, fn: () => void): void {
@@ -458,6 +469,237 @@ ok('painters: focus + sbs emit escaped html with cells/gutters', () => {
   assert.ok(ah.includes('d-mod'), 'mod row class');
   const empty = sbsHtml(diffAligned({ z: 1 }, {}), 1, 1); // a removed-subtree row
   assert.ok(empty.includes('<span class="dg"></span>'), 'empty spacer cell');
+});
+
+// ---------- search (lazy island core) ----------
+const CI: SearchOpts = { ci: true, re: false };
+const CS: SearchOpts = { ci: false, re: false };
+const RE_CI: SearchOpts = { ci: true, re: true };
+
+// independent ASCII-fold oracle — ground truth for the native-floor scan
+function naiveCi(hay: string, q: string): number[] {
+  const out: number[] = [];
+  if (!q) return out;
+  const fold = (c: number): number => (c >= 65 && c <= 90 ? c + 32 : c);
+  const n = hay.length;
+  const m = q.length;
+  for (let i = 0; i + m <= n; i++) {
+    let j = 0;
+    while (j < m) {
+      if (fold(hay.charCodeAt(i + j)) !== fold(q.charCodeAt(j))) break;
+      j++;
+    }
+    if (j === m) out.push(i);
+  }
+  return out;
+}
+
+ok('search: findAll case-insensitive, exact offsets, non-overlapping', () => {
+  const vm = buildView({ find: 'find me FIND', x: 'finder' }, 2, 10);
+  const st = findAll(vm, 'find', CI);
+  assert.deepStrictEqual([...st.starts], naiveCi(vm.pretty, 'find'));
+  assert.ok(st.starts.length >= 3, 'hits incl uppercase');
+  assert.strictEqual(st.ends[0] - st.starts[0], 4);
+  assert.strictEqual(st.cur, 0);
+  // non-overlapping scan: "aaa" / "aa" → only [0]
+  const vm2 = buildView({ v: 'aaa' }, 2, 4);
+  assert.deepStrictEqual([...findAll(vm2, 'aa', CI).starts], [vm2.pretty.indexOf('aa')]);
+});
+
+ok('search: case toggle — cs finds strictly fewer on mixed-case doc', () => {
+  const vm = buildView({ k: 'Ab aB AB ab' }, 2, 10);
+  assert.strictEqual(findAll(vm, 'ab', CI).starts.length, 4);
+  assert.strictEqual(findAll(vm, 'ab', CS).starts.length, 1);
+});
+
+ok('search: regex mode — variable-length ends + anchors + flags', () => {
+  const vm = buildView({ a: [12, 7, 345] }, 2, 10);
+  const st = findAll(vm, '\\d+', RE_CI);
+  assert.strictEqual(st.starts.length, 3);
+  for (let i = 0; i < st.starts.length; i++) {
+    const slice = vm.pretty.slice(st.starts[i], st.ends[i]);
+    assert.ok(/^\d+$/.test(slice), `digits @${i}: ${slice}`);
+  }
+  assert.ok(st.ends[2] - st.starts[2] > st.ends[1] - st.starts[1], 'variable lengths');
+  const anchored = findAll(vm, '^\{', { ci: false, re: true });
+  assert.strictEqual(anchored.starts.length, 1);
+  assert.strictEqual(anchored.starts[0], 0);
+  const vm2 = buildView({ k: 'aBc x AbC' }, 2, 8);
+  assert.strictEqual(findAll(vm2, 'abc', RE_CI).starts.length, 2);
+  assert.strictEqual(findAll(vm2, 'abc', { ci: false, re: true }).starts.length, 0);
+});
+
+ok('search: bad regex → flagged, zero hits, no throw', () => {
+  const vm = buildView({ a: 1 }, 2, 4);
+  const st = findAll(vm, '(unclosed', RE_CI);
+  assert.ok(st.bad.length > 0);
+  assert.strictEqual(st.starts.length, 0);
+  assert.strictEqual(st.cur, -1);
+});
+
+ok('search: zero-length regex terminates and emits no empty marks', () => {
+  const vm = buildView({ k: 'aab' }, 2, 6);
+  const st = findAll(vm, 'b*', RE_CI);
+  assert.ok(st.starts.length > 0 && st.starts.length < 50, 'bounded scan');
+  const html = rowHtml(vm, st, 0, vm.lines);
+  assert.ok(!html.includes('<mark class="m"></mark>'), 'no empty marks');
+});
+
+ok('search: empty needle, no hit, needle longer than doc', () => {
+  const vm = buildView({ a: 1 }, 2, 4);
+  assert.strictEqual(findAll(vm, '', CI).starts.length, 0);
+  const miss = findAll(vm, 'zzzzzz', CI);
+  assert.strictEqual(miss.starts.length, 0);
+  assert.strictEqual(miss.cur, -1);
+  assert.ok(miss.ms >= 0);
+  const long = findAll(vm, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', CI);
+  assert.strictEqual(long.starts.length, 0);
+});
+
+ok('search: lineOf binary search over lineStarts', () => {
+  const vm = buildView({ a: [1, 2], b: 'xyz' }, 2, 100); // 7 lines
+  for (let i = 0; i < vm.lines; i++) {
+    assert.strictEqual(lineOf(vm.lineStarts, vm.lineStarts[i]), i, `start @${i}`);
+    assert.strictEqual(lineOf(vm.lineStarts, vm.lineStarts[i] + 1), i, `mid @${i}`);
+  }
+  assert.strictEqual(lineOf(vm.lineStarts, vm.pretty.length), vm.lines - 1);
+});
+
+ok('search: exotic fold (length-changing toLowerCase) degrades to case-sensitive', () => {
+  // İ lowercases to 2 chars → haystack fold unsafe → raw + case-sensitive
+  const vm = buildView({ 'İ': 1 }, 2, 6);
+  assert.notStrictEqual(vm.pretty.toLowerCase().length, vm.pretty.length);
+  assert.strictEqual(findAll(vm, 'i', CI).starts.length, 0); // no silent ci match
+  const hit = findAll(vm, 'İ', CI);
+  assert.strictEqual(hit.starts.length, 1); // needle fold grew → cs path finds it
+  assert.strictEqual(hit.ends[0] - hit.starts[0], 1); // length stays the QUERY's length
+});
+
+ok('search: rowHtml zero matches ≡ textHtml byte-for-byte', () => {
+  const vm = buildView({ a: [1, '<x>'], b: null }, 2, 40);
+  const st = findAll(vm, 'qqq', CI);
+  assert.deepStrictEqual(rowHtml(vm, st, 0, vm.lines), textHtml(vm, 0, vm.lines));
+});
+
+ok('search: rowHtml marks, current match class, escapes inside marks', () => {
+  const vm = buildView({ k: 'ab<cd ab' }, 2, 20);
+  const st = findAll(vm, 'ab', CI);
+  assert.strictEqual(st.starts.length, 2);
+  const html = rowHtml(vm, st, 0, vm.lines);
+  assert.ok(html.includes('<mark class="m">'), 'match marks present');
+  // findAll seeds cur=0 → exactly one current mark
+  assert.strictEqual(html.split('<mark class="mc">').length - 1, 1);
+  // point cur at a match on a visible row → mc appears exactly once
+  st.cur = st.starts.length - 1;
+  const htmlCur = rowHtml(vm, st, 0, vm.lines);
+  assert.strictEqual(htmlCur.split('<mark class="mc">').length - 1, 1);
+  // needle containing < must escape inside the mark element
+  const stLt = findAll(vm, 'b<', CI);
+  assert.strictEqual(stLt.starts.length, 1);
+  assert.ok(rowHtml(vm, stLt, 0, vm.lines).includes('<mark class="mc">b&lt;</mark>'));
+});
+
+ok('search: cross-line match renders clipped marks without leaking rows', () => {
+  const vm = buildView({ a: 1, b: 2 }, 2, 20);
+  const q = '1,\n  "b"'; // spans the newline between lines
+  const st = findAll(vm, q, CI);
+  assert.strictEqual(st.starts.length, 1);
+  const html = rowHtml(vm, st, 0, vm.lines);
+  assert.ok(html.split('<div class="row">').length - 1 === vm.lines);
+  assert.ok(!html.includes('undefined'), 'no undefined leaks');
+  // each row shows only its within-line slice of the match
+  const marks = html.match(/<mark/g);
+  assert.ok(marks && marks.length >= 2, 'both lines carry their slice');
+});
+
+// ---------- search: tree island ----------
+function countHit(t: TreeHits): number {
+  let c = 0;
+  for (let i = 0; i < t.nodeHit.length; i++) if (t.nodeHit[i]) c++;
+  return c;
+}
+
+ok('search tree: attach scans interned pools, node flags correct', () => {
+  const value = { alpha: 1, beta: { alpha: 2 }, gamma: 'alpha' };
+  const ft = flatten(value);
+  const st = findAll(buildView(value, 2, 30), 'alpha', CI);
+  attachTree(st, ft, null);
+  const t = st.tree!;
+  // key pool: 'alpha' interned once, hits BOTH key nodes; gamma's leaf
+  // preview '"alpha"' also contains the needle → third node via valHit
+  assert.ok(t.keyHit[ft.keyIdx[1]] !== null);
+  assert.strictEqual(t.keyHit[ft.keyIdx[1]]!.length, 2); // one range pair
+  assert.strictEqual(countHit(t), 3);
+  assert.strictEqual(t.visCount, 3);
+  assert.strictEqual(t.pos[1], 0); // visual order == node order, all expanded
+});
+
+ok('search tree: collapse hides subtree matches from nav sequence', () => {
+  const value = { alpha: 1, inner: { deepAlpha: 2 } };
+  const ft = flatten(value);
+  const st = findAll(buildView(value, 2, 40), 'alpha', CI);
+  attachTree(st, ft, null);
+  // hits: key 'alpha' (node 1) + key 'deepAlpha' (node 3) — numeric vals miss
+  const total = countHit(st.tree!);
+  assert.strictEqual(total, 2);
+  const exp = new Uint8Array(ft.rowCount).fill(1);
+  exp[2] = 0; // collapse inner — subtree holds deepAlpha
+  let vis = buildVisible(ft, exp);
+  refreshTree(st, ft, vis);
+  assert.strictEqual(st.tree!.visCount, 1);
+  assert.ok(st.cur >= 0 && st.cur < 1, 'cur clamped into visible sequence');
+  exp.fill(1);
+  vis = buildVisible(ft, exp);
+  refreshTree(st, ft, vis);
+  assert.strictEqual(st.tree!.visCount, 2);
+});
+
+ok('search tree: treeRowHtml zero hits ≡ treeHtml byte-for-byte', () => {
+  const value = { a: [1, '<x>'], b: null };
+  const ft = flatten(value);
+  const expanded = new Uint8Array(ft.rowCount).fill(1);
+  const vis = buildVisible(ft, expanded);
+  const st = findAll(buildView(value, 2, 40), 'zzz', CI);
+  attachTree(st, ft, vis);
+  assert.deepStrictEqual(
+    treeRowHtml(ft, expanded, vis, st, 0, vis.length),
+    treeHtml(ft, expanded, vis, 0, vis.length),
+  );
+});
+
+ok('search tree: marks on keys/values + smc current-node tint', () => {
+  const value = { alpha: 'alpha' };
+  const ft = flatten(value);
+  const expanded = new Uint8Array(ft.rowCount).fill(1);
+  const vis = buildVisible(ft, expanded);
+  const st = findAll(buildView(value, 2, 20), 'alpha', CI);
+  attachTree(st, ft, vis);
+  const html = treeRowHtml(ft, expanded, vis, st, 0, vis.length);
+  // key 'alpha' + leaf preview '"alpha"' — both carry a mark
+  assert.strictEqual((html.match(/<mark class="m">/g) || []).length, 2);
+  assert.ok(html.includes('class="trow smc"'), 'current node tinted');
+  st.cur = st.tree!.visCount - 1;
+  const last = treeRowHtml(ft, expanded, vis, st, 0, vis.length);
+  assert.strictEqual(last.split('smc').length - 1, 1);
+});
+
+const sAlpha = 'abAB01 \n",:{}';
+function sRand(maxLen: number): string {
+  const len = 1 + ((rnd() * maxLen) | 0);
+  let s = '';
+  for (let i = 0; i < len; i++) s += sAlpha[(rnd() * sAlpha.length) | 0];
+  return s;
+}
+
+ok('search: seeded fuzz vs ASCII-fold oracle', () => {
+  for (let it = 0; it < 300; it++) {
+    const prettyLike = sRand(60) + '"' + sRand(30) + '"' + sRand(60);
+    const q = sRand(5);
+    const vm = buildView([prettyLike], 2, prettyLike.length);
+    const got = [...findAll(vm, q, CI).starts];
+    const want = naiveCi(vm.pretty, q);
+    assert.deepStrictEqual(got, want, `offsets @${it} q=${JSON.stringify(q)}`);
+  }
 });
 
 console.log(`\n${passed} tests passed`);

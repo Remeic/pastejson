@@ -82,6 +82,14 @@ export class VScroll {
     this.host.scrollTop = 0;
   }
 
+  // force the next paint even when the visible window is unchanged
+  // (paint-state flips without touching scroll — e.g. search marks)
+  repaint(): void {
+    this.pFirst = -1;
+    this.pCount = -1;
+    this.schedule();
+  }
+
   // keep node `anchor` (row index in VISUAL space) at same viewport spot after data change
   reveal(anchorVisual: number): void {
     const h = this.host.clientHeight;
