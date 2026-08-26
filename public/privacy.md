@@ -1,10 +1,10 @@
-# Privacy Policy — pastejson
+# Privacy Policy — json
 
 Last updated: August 26, 2026
 
 ## Who we are
 
-pastejson is a free online JSON formatter operated by Giulio Fagioli ([justgiulio.dev](https://justgiulio.dev)) as data controller under the EU General Data Protection Regulation (GDPR).
+json is a free online JSON formatter operated by Giulio Fagioli ([justgiulio.dev](https://justgiulio.dev)) as data controller under the EU General Data Protection Regulation (GDPR).
 
 ## What happens to your data
 

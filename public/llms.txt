@@ -1,10 +1,10 @@
-# pastejson
+# json
 
 > Free online JSON formatter, viewer and differ at json.justgiulio.dev. Paste or drop JSON and see it formatted instantly — multi-MB documents render in milliseconds. Runs 100% in the browser; no data ever leaves the machine. Built by Giulio Fagioli (https://justgiulio.dev).
 
 ## Pages
 
-- [pastejson](https://json.justgiulio.dev/): the tool. Paste JSON anywhere on the page.
+- [json](https://json.justgiulio.dev/): the tool. Paste JSON anywhere on the page.
 - [About](https://json.justgiulio.dev/about): what it is, design principles, author.
 - [Privacy](https://json.justgiulio.dev/privacy): no cookies, no analytics, no uploads — all processing is client-side.
 - [Contact](https://json.justgiulio.dev/contact): GitHub issues and direct channels.

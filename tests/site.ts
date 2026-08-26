@@ -17,11 +17,11 @@ function ok(name: string, fn: () => void): void {
 const read = (p: string): string => readFileSync(ROOT + p, 'utf8');
 
 // ---------- domain consistency ----------
-ok('no stale pastejson.com in shipped files', () => {
+ok('no stale json.com in shipped files', () => {
   const files = ['index.html', 'vercel.json', ...readdirSync(PUB).map((f) => `public/${f}`)];
   for (const f of files) {
     if (!/\.(html|md|txt|xml|json)$/.test(f)) continue;
-    assert.ok(!read(f).includes('pastejson.com'), `${f} still references pastejson.com`);
+    assert.ok(!read(f).includes('json.com'), `${f} still references json.com`);
   }
 });
 
@@ -68,7 +68,7 @@ ok('404 page exists and gives agents recovery links', () => {
 // ---------- llms.txt ----------
 ok('llms.txt: format + when-to-use + agent notes + valid links', () => {
   const txt = read('public/llms.txt');
-  assert.ok(txt.startsWith('# pastejson\n'));
+  assert.ok(txt.startsWith('# json\n'));
   assert.ok(/^> /m.test(txt), 'must open with blockquote summary');
   assert.ok(txt.includes('## When to use this tool'));
   assert.ok(txt.includes('## Agent notes'));
@@ -104,8 +104,8 @@ ok('index.html JSON-LD parses with brand + alternateName', () => {
   assert.ok(m, 'JSON-LD script present');
   const ld = JSON.parse(m![1]) as Record<string, unknown>;
   assert.strictEqual(ld['@type'], 'WebApplication');
-  assert.strictEqual(ld.name, 'pastejson');
-  assert.strictEqual(ld.alternateName, 'json');
+  assert.strictEqual(ld.name, 'json');
+  assert.strictEqual(ld.alternateName, 'pastejson');
   assert.strictEqual(ld.url, DOMAIN + '/');
   const author = ld.author as Record<string, unknown>;
   assert.strictEqual(author.url, 'https://justgiulio.dev');

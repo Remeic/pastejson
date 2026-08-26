@@ -1,6 +1,6 @@
-// pastejson service worker: stale-while-revalidate for the single-file app shell.
+// json service worker: stale-while-revalidate for the single-file app shell.
 // Repeat visits = instant, works offline.
-const CACHE = 'pastejson-v1';
+const CACHE = 'json-v1';
 
 self.addEventListener('install', (e) => {
   e.waitUntil(
