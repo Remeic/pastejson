@@ -242,6 +242,14 @@ function exitDiff(): void {
   statusbar.textContent = '';
 }
 
+// ---------- legal (lazy island orchestration) ----------
+let legalMod: typeof import('./legal') | null = null;
+$('link-privacy').addEventListener('click', async (e) => {
+  e.preventDefault();
+  if (!legalMod) legalMod = await import('./legal');
+  legalMod.openLegal();
+});
+
 // ---------- search (lazy island orchestration) ----------
 async function ensureSearchMod(): Promise<typeof import('./search')> {
   if (!searchMod) searchMod = await import('./search');
@@ -851,9 +859,10 @@ function resetToLanding(): void {
   requestAnimationFrame(() => inTa.focus());
 }
 
-// Esc = close diff panel, else close search, else leave diff, else clear
+// Esc = close legal, else close diff panel, else close search, else leave diff, else clear
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
+  if (legalMod?.legalOpen) return legalMod.closeLegal();
   if (panelOpen) return closeDiffPanel();
   if (searchOpen) return closeSearch();
   if (curView === 'diff') return exitDiff();
