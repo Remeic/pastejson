@@ -24,8 +24,12 @@ const OVERSCAN = 12;
 // the box is a fix-it editor, not a storage surface
 const TEXTAREA_CAP = 1_000_000;
 
-function setTa(s: string): void {
-  inTa.value = s.length > TEXTAREA_CAP ? s.slice(0, TEXTAREA_CAP) + '\n…' : s;
+// cap=true for auto-fill surfaces (paste/clipboard) where a multi-MB textarea
+// would jank; cap=false on the fix-it surfaces (Edit/error) — the user is there
+// to edit the REAL document, and a truncated value would be committed by the
+// input path, silently destroying the tail (audit F-02).
+function setTa(s: string, cap = true): void {
+  inTa.value = cap && s.length > TEXTAREA_CAP ? s.slice(0, TEXTAREA_CAP) + '\n…' : s;
 }
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -249,7 +253,7 @@ function enterEdit(): void {
   closeSearch();
   closeDiffPanel();
   out.hidden = true;
-  setTa(lastRaw);
+  setTa(lastRaw, false);
   setMode('editing');
   inTa.focus();
   inTa.setSelectionRange(1e9, 1e9); // clamps to end
@@ -541,7 +545,7 @@ function showError(
   out.hidden = true;
   toolbar.hidden = false;
   statusbar.textContent = '';
-  setTa(lastRaw);
+  setTa(lastRaw, false);
   let loc = '';
   if (line > 0) loc = ` — line ${line}, col ${col}`;
   else if (offset >= 0) loc = ` — at char ${offset.toLocaleString('en-US')}`;
