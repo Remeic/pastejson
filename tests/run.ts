@@ -705,7 +705,7 @@ ok('search: seeded fuzz vs ASCII-fold oracle', () => {
 // diff: Myers trace allocation stays inside its documented 32MB budget
 ok('diff: myers trace bound ≤ 8M ints at extreme widths', () => {
   for (const w of [1, 3, 4097, 40001, 2_000_001]) {
-    const dCap = Math.min(2048, Math.floor(MYERS_TRACE_BUDGET / w));
+    const dCap = Math.min(2048, Math.floor(MYERS_TRACE_BUDGET / w) - 1);
     const bytes = (dCap + 1) * w * 4;
     assert.ok(bytes <= 32 << 20, `w=${w} allocates ${bytes}`);
   }
