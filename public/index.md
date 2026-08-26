@@ -1,4 +1,4 @@
-# pastejson
+# json
 
 > Free online JSON formatter, viewer and differ. Paste or drop JSON and see it formatted instantly — multi-MB documents render in milliseconds. Runs 100% in your browser: no uploads, no cookies, no tracking.
 

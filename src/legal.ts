@@ -12,7 +12,7 @@ const CONTENT = `
 <p class="l-upd">Last updated: August 26, 2026</p>
 
 <h3>Who we are</h3>
-<p>pastejson is a free online JSON formatter operated by Giulio Fagioli (<a href="https://justgiulio.dev" target="_blank" rel="noopener">justgiulio.dev</a>) as data controller under the EU General Data Protection Regulation (GDPR).</p>
+<p>json is a free online JSON formatter operated by Giulio Fagioli (<a href="https://justgiulio.dev" target="_blank" rel="noopener">justgiulio.dev</a>) as data controller under the EU General Data Protection Regulation (GDPR).</p>
 
 <h3>What happens to your data</h3>
 <p>Everything you paste, type or drop into this page is processed <strong>100% locally in your browser</strong>. Your JSON is never uploaded, transmitted, stored or logged by us. Closing the tab erases it.</p>

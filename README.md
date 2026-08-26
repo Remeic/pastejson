@@ -1,4 +1,4 @@
-# <img src="public/icon.svg" width="28" align="top" alt="" /> pastejson
+# <img src="public/icon.svg" width="28" align="top" alt="" /> json
 
 **Paste JSON. See it formatted. Instantly.** The fastest JSON viewer and differ on the web — multi-MB documents render in milliseconds, 100% in your browser.
 

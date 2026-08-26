@@ -1,6 +1,6 @@
-# Contact — pastejson
+# Contact — json
 
-Questions, bug reports, feature requests, privacy inquiries or GDPR requests about pastejson reach the author directly through one of these channels:
+Questions, bug reports, feature requests, privacy inquiries or GDPR requests about json reach the author directly through one of these channels:
 
 - **GitHub issues (preferred, public):** [github.com/Remeic/pastejson/issues](https://github.com/Remeic/pastejson/issues) — fastest response, and the report helps other users.
 - **Website:** [justgiulio.dev](https://justgiulio.dev) — personal site with direct contact options.
