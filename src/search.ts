@@ -156,9 +156,10 @@ function findAllRe(vm: ViewModel, q: string, opts: SearchOpts): SearchState {
   return st;
 }
 
-// scan one SHORT string (interned key/val preview); compile once per call,
-// callers batch per pool so total compiles = pools × toggles, not rows
-function scanStr(s: string, q: string, opts: SearchOpts): Int32Array | null {
+// scan one SHORT string (interned key/val preview). `re` is compiled once per
+// QUERY by attachTree and passed in — compiling per row was 17k compiles for
+// 17k keys (audit F-06).
+function scanStr(s: string, q: string, opts: SearchOpts, re: RegExp | null): Int32Array | null {
   if (!q) return null;
   if (!opts.re) {
     const N = opts.ci ? q.toLowerCase() : q;
@@ -177,12 +178,7 @@ function scanStr(s: string, q: string, opts: SearchOpts): Int32Array | null {
     }
     return g.len > 0 ? g.trim() : null;
   }
-  let re: RegExp;
-  try {
-    re = new RegExp(q, opts.ci ? 'gi' : 'g');
-  } catch {
-    return null;
-  }
+  if (re === null) return null; // regex mode with unparseable pattern
   const g = new GrowInt32();
   for (;;) {
     const m = re.exec(s);
@@ -200,10 +196,18 @@ export function attachTree(
   ft: FlatTree,
   visibleRows: Int32Array | null,
 ): void {
+  let re: RegExp | null = null;
+  if (st.opts.re) {
+    try {
+      re = new RegExp(st.q, st.opts.ci ? 'gi' : 'g');
+    } catch {
+      re = null; // bad pattern — pools scan to all-null, matches text-path behavior
+    }
+  }
   const keyHit: (Int32Array | null)[] = new Array(ft.keys.length);
-  for (let i = 0; i < ft.keys.length; i++) keyHit[i] = scanStr(ft.keys[i], st.q, st.opts);
+  for (let i = 0; i < ft.keys.length; i++) keyHit[i] = scanStr(ft.keys[i], st.q, st.opts, re);
   const valHit: (Int32Array | null)[] = new Array(ft.vals.length);
-  for (let i = 0; i < ft.vals.length; i++) valHit[i] = scanStr(ft.vals[i], st.q, st.opts);
+  for (let i = 0; i < ft.vals.length; i++) valHit[i] = scanStr(ft.vals[i], st.q, st.opts, re);
   const nodeHit = new Uint8Array(ft.rowCount);
   const KEYIDX = ft.keyIdx;
   const VALIDX = ft.valIdx;

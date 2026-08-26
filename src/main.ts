@@ -259,13 +259,20 @@ function enterEdit(): void {
   inTa.setSelectionRange(1e9, 1e9); // clamps to end
 }
 
-// Esc without edits → straight back to the view; vm/scroller never torn down.
-// vm is never null in editing mode: enterEdit guards, only resetToLanding nulls it.
+// exit → unchanged restores free; edits run ONE parse (Esc / Edit = apply).
+// vm/scroller are never torn down on the unchanged path.
 function exitEdit(): void {
   if (mode !== 'editing') return;
+  clearTimeout(debounceT);
+  const v = inTa.value;
   inTa.value = '';
-  out.hidden = false;
-  setMode('loaded');
+  if (!v || /^\s*$/.test(v)) return resetToLanding();
+  if (v === lastRaw) {
+    out.hidden = false;
+    setMode('loaded');
+    return;
+  }
+  load(v); // errors land in error mode, caret at offset — the fix-it loop
 }
 
 // ---------- legal (lazy island orchestration) ----------
@@ -692,8 +699,10 @@ document.addEventListener('paste', (e: ClipboardEvent) => {
   load(t);
 });
 
-// paste into the textarea = PRIMARY path: zero debounce, instant load
+// paste into the textarea = PRIMARY path: zero debounce, instant load.
+// Editing is sticky — native insert only, parse happens once on exit.
 inTa.addEventListener('paste', (e: ClipboardEvent) => {
+  if (mode === 'editing') return;
   const t = e.clipboardData?.getData('text/plain');
   if (!t) return; // let native insert fire input path
   e.preventDefault();
@@ -705,12 +714,11 @@ inTa.addEventListener('paste', (e: ClipboardEvent) => {
 // typing / native fallback paste into textarea (debounced)
 let debounceT = 0;
 inTa.addEventListener('input', () => {
+  if (mode === 'editing') return; // sticky: no parse per keystroke
   clearTimeout(debounceT);
   debounceT = window.setTimeout(() => {
     const v = inTa.value;
     if (!v || /^\s*$/.test(v)) return resetToLanding();
-    // editing with unchanged content → just restore the view, skip re-parse
-    if (mode === 'editing' && v === lastRaw) return exitEdit();
     load(v);
   }, 140);
 });
@@ -748,7 +756,7 @@ toolbar.addEventListener('click', (e) => {
   const el = (e.target as HTMLElement).closest('button');
   if (!el) return;
   if (el.id === 'btn-new') return resetToLanding();
-  if (el.id === 'btn-edit') return enterEdit();
+  if (el.id === 'btn-edit') return mode === 'editing' ? exitEdit() : enterEdit();
   if (el.id === 'btn-copyp') return copyText(vm?.pretty ?? '');
   if (el.id === 'btn-copym') {
     if (!vm) return;

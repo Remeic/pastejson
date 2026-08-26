@@ -103,9 +103,14 @@ console.log(`paste pipeline   ${total.toFixed(1)} ms (min of 7)`);
 // per-run walk-to-native RATIO — GC pressure and thermal drift inflate
 // total and native in the same iteration, so the ratio only moves when
 // our JS actually regresses. Today's walk ≈ 0.45× native; trip at 0.75.
+// Statistic = MEDIAN of per-run ratios (audit F-05): min-of-a-difference is
+// biased low and moved 0.05→0.53 across identical-code runs; median is stable.
 const ratios = runs.map((r) => (r.total - (r.parse + r.stringify)) / (r.parse + r.stringify));
-const walkRatio = min(ratios);
-console.log(`walk/native ratio ${walkRatio.toFixed(2)} (min of per-run ratios)`);
+const sorted = [...ratios].sort((a, b) => a - b);
+const walkRatio = sorted[sorted.length >> 1];
+console.log(
+  `walk/native ratio ${walkRatio.toFixed(2)} (median of per-run ratios; min ${Math.min(...ratios).toFixed(2)})`,
+);
 if (walkRatio > 0.75) {
   console.warn(`FAIL: walk/native ${walkRatio.toFixed(2)} > 0.75 — walk regression`);
   process.exit(1);
