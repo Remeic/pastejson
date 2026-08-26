@@ -1,9 +1,6 @@
 // Hand-rolled charCode FSM tokenizer — tuned hot path.
 // - 128-entry char-class tables: 1 lookup replaces comparison cascades
 // - string scan via native indexOf (memchr speed) + backslash-parity check
-// - optional line-index collection fused into the same pass (zero extra scans)
-// - buffers pre-seeded from src.length → no doubling copies on typical docs
-//
 // Output: Int32Array of PAIRS [endOffset, typeCode].
 // Token start = previous pair's endOffset (first token starts at 0).
 // Only ever run on JSON that already passed JSON.parse.
@@ -51,31 +48,13 @@ NUMCH[69] = 1;
 NUMCH[43] = 1;
 NUMCH[45] = 1;
 
-export interface LineIndex {
-  lineStarts: Uint32Array;
-  lines: number;
-  maxLen: number;
-}
-
-export function tokenize(src: string, linesOut?: LineIndex): Int32Array {
+export function tokenize(src: string): Int32Array {
   const n = src.length;
   // seed: ~6 src chars per token on formatted JSON → len/6 pairs = len/3 int32s
-  let cap = max(4096, (n / 3) | 0);
+  let cap = (n / 3) | 0;
+  if (cap < 4096) cap = 4096;
   let len = 0;
   let out = new Int32Array(cap);
-
-  // line index state
-  let ls: Uint32Array | null = null;
-  let lsCap = 0;
-  let lsLen = 0;
-  let nl = 0;
-  let segStart = 0;
-  let maxLen = 0;
-  if (linesOut) {
-    lsCap = max(1024, (n / 60) | 0);
-    ls = new Uint32Array(lsCap);
-    ls[lsLen++] = 0;
-  }
 
   const push = (end: number, type: number): void => {
     if (len + 2 > cap) {
@@ -88,27 +67,12 @@ export function tokenize(src: string, linesOut?: LineIndex): Int32Array {
     out[len++] = type;
   };
 
-  const recordNl = (i: number): void => {
-    const segLen = i - segStart;
-    if (segLen > maxLen) maxLen = segLen;
-    nl++;
-    if (lsLen === lsCap) {
-      lsCap <<= 1;
-      const g = new Uint32Array(lsCap);
-      g.set(ls!);
-      ls = g;
-    }
-    ls![lsLen++] = i + 1;
-    segStart = i + 1;
-  };
-
   let i = 0;
   while (i < n) {
     const c = src.charCodeAt(i);
     const cls = c < 128 ? CLS[c] : 0;
 
     if (cls === C_WS) {
-      if (c === 10 && ls !== null) recordNl(i);
       i++;
       continue;
     }
@@ -214,17 +178,6 @@ export function tokenize(src: string, linesOut?: LineIndex): Int32Array {
     i++;
   }
 
-  if (linesOut && ls !== null) {
-    const tail = n - segStart;
-    if (tail > maxLen) maxLen = tail;
-    linesOut.lineStarts = lsLen === ls.length ? ls : ls.slice(0, lsLen);
-    linesOut.lines = nl + 1;
-    linesOut.maxLen = maxLen;
-  }
-
   return len === out.length ? out : out.slice(0, len);
 }
 
-function max(a: number, b: number): number {
-  return a > b ? a : b;
-}
