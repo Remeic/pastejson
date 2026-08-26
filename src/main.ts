@@ -125,8 +125,6 @@ function fmtStatus(ms: number): void {
 }
 
 // ---------- diff (lazy island orchestration) ----------
-const viewTag = $('view-tag');
-
 function syncSeg(name: ViewName): void {
   toolbar.querySelectorAll('.seg button').forEach((b) => {
     const el = b as HTMLElement;
@@ -138,11 +136,10 @@ function syncSeg(name: ViewName): void {
     const disable = name === 'diff' && !isDiff;
     el.toggleAttribute('disabled', disable);
   });
-  // minified has no indentation — the select is meaningless there
-  $<HTMLSelectElement>('sel-indent').disabled = name === 'diff' || name === 'min';
-  // persistent "where am I" evidence, independent of button styling
-  viewTag.textContent = name;
-  viewTag.hidden = false;
+  // minified/diff have no indentation, tree renders depth structurally —
+  // the select is meaningless in all three
+  $<HTMLSelectElement>('sel-indent').disabled =
+    name === 'diff' || name === 'min' || name === 'tree';
 }
 
 function showDiffPanel(): void {
@@ -841,7 +838,6 @@ function resetToLanding(): void {
   visibleRows = null;
   diffRes = null;
   alignedRes = null;
-  viewTag.hidden = true;
   lastBVal = null;
   curView = 'text';
   closeSearch();
