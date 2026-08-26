@@ -1,0 +1,8 @@
+# pastejson
+
+> Free online JSON formatter, viewer and differ. Paste or drop JSON and see it formatted instantly - multi-MB documents render in milliseconds. Runs 100% in the browser; no data ever leaves the machine. Built by Giulio Fagioli (https://justgiulio.dev).
+
+## Pages
+
+- [pastejson](https://pastejson.com/): the tool. Paste JSON anywhere on the page.
+- [Privacy](https://pastejson.com/privacy): no cookies, no analytics, no uploads - all processing is client-side.
