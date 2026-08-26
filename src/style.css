@@ -42,7 +42,8 @@ body[data-mode=landing] #in {
   border: 0; resize: none; background: transparent; caret-color: transparent; cursor: copy;
 }
 body[data-mode=error] #in,
-body[data-mode=working] #in {
+body[data-mode=working] #in,
+body[data-mode=editing] #in {
   flex: 1; margin: 0 16px 16px; padding: 12px 14px;
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
   outline: none; resize: none; white-space: pre; overflow: auto;
