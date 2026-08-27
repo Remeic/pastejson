@@ -11,7 +11,8 @@ import { emitJson } from './serialize';
 export interface ViewModel {
   pretty: string;
   min: string | null; // lazy: built on first Minified view / copy-min
-  source: unknown; // kept for lazy min build
+  // undefined means the source lives in the Worker; null is a valid JSON value.
+  source: unknown | undefined;
   indent: number | '\t';
   lineStarts: Uint32Array; // offsets where each pretty-printed line starts
   lines: number;

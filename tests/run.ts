@@ -88,6 +88,15 @@ ok('buildView tab indent', () => {
   assert.ok(vm.pretty.startsWith('{\n\t"a"'));
 });
 
+ok('null root stays present for lazy source views', () => {
+  const vm = buildView(null, 2, 4);
+  assert.strictEqual(vm.source, null);
+  assert.strictEqual(ensureMin(vm), 'null');
+  const ft = flatten(null, vm.lines);
+  assert.strictEqual(ft.rowCount, 1);
+  assert.strictEqual(ft.vals[ft.valIdx[0]], 'null');
+});
+
 ok('emitJson matches stringify for escaped values and tokens', () => {
   const nasty = '\u0000"\\\n' + String.fromCharCode(0xd800);
   const value = { 'quote"key': nasty, n: -0, big: 1e21 };
