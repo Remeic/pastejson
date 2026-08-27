@@ -20,6 +20,14 @@ import {
   type SearchOpts,
   type TreeHits,
 } from '../src/search';
+import {
+  DEFAULT_BROWSER_THRESHOLDS,
+  makeBrowserFixture,
+  percentile,
+  planBrowserSessions,
+  summarizeBrowserSamples,
+  type BrowserSample,
+} from '../scripts/bench-browser-core';
 
 let passed = 0;
 function ok(name: string, fn: () => void): void {
@@ -737,6 +745,79 @@ ok('diff: myers trace bound ≤ 8M ints at extreme widths', () => {
     const bytes = (dCap + 1) * w * 4;
     assert.ok(bytes <= 32 << 20, `w=${w} allocates ${bytes}`);
   }
+});
+
+// ---------- browser benchmark contracts ----------
+ok('browser bench: fixture is exact-size, deterministic valid JSON', () => {
+  const a = makeBrowserFixture(64 * 1024);
+  const b = makeBrowserFixture(64 * 1024);
+  assert.strictEqual(a.raw.length, 64 * 1024);
+  assert.strictEqual(a.raw, b.raw);
+  const value = JSON.parse(a.raw) as { name: string; items: { id: number }[] };
+  assert.strictEqual(value.name, 'bench');
+  assert.ok(value.items.length > 1);
+  assert.strictEqual(value.items[0].id, 0);
+  assert.deepStrictEqual(a.expectedFirstLines.slice(0, 3), ['{', '  "name": "bench",', '  "items": [']);
+});
+
+ok('browser bench: fixture rejects targets too small for representative data', () => {
+  assert.throws(() => makeBrowserFixture(100), RangeError);
+});
+
+ok('browser bench: sessions distribute every run deterministically', () => {
+  assert.deepStrictEqual(planBrowserSessions(30, 5), [6, 6, 6, 6, 6]);
+  assert.deepStrictEqual(planBrowserSessions(7, 3), [3, 2, 2]);
+  assert.throws(() => planBrowserSessions(0, 1), RangeError);
+  assert.throws(() => planBrowserSessions(2, 3), RangeError);
+});
+
+ok('browser bench: nearest-rank percentiles do not interpolate claims', () => {
+  assert.strictEqual(percentile([4, 1, 3, 2], 0.5), 2);
+  assert.strictEqual(percentile([4, 1, 3, 2], 0.95), 4);
+  assert.throws(() => percentile([], 0.95), RangeError);
+  assert.throws(() => percentile([1], 0), RangeError);
+});
+
+const browserSample = (overrides: Partial<BrowserSample> = {}): BrowserSample => ({
+  firstPaintMs: 700,
+  nativeMs: 400,
+  longestTaskMs: 40,
+  memoryDeltaBytes: 1024 ** 3,
+  correct: true,
+  ...overrides,
+});
+
+ok('browser bench: 100–1–2 thresholds pass together', () => {
+  const summary = summarizeBrowserSamples(
+    Array.from({ length: 30 }, () => browserSample()),
+    DEFAULT_BROWSER_THRESHOLDS,
+  );
+  assert.strictEqual(summary.pass, true);
+  assert.deepStrictEqual(summary.failures, []);
+  assert.strictEqual(summary.firstPaintP50Ms, 700);
+  assert.strictEqual(summary.firstPaintP95Ms, 700);
+  assert.strictEqual(summary.ratioP95, 1.75);
+});
+
+ok('browser bench: every failed or unmeasured contract is explicit', () => {
+  const summary = summarizeBrowserSamples([
+    browserSample({
+      firstPaintMs: 1100,
+      nativeMs: 500,
+      longestTaskMs: 51,
+      memoryDeltaBytes: null,
+      correct: false,
+    }),
+  ], DEFAULT_BROWSER_THRESHOLDS);
+  assert.strictEqual(summary.pass, false);
+  assert.deepStrictEqual(summary.failures, [
+    'paint-p50',
+    'paint-p95',
+    'native-ratio',
+    'long-task',
+    'memory-unavailable',
+    'correctness',
+  ]);
 });
 
 console.log(`\n${passed} tests passed`);
