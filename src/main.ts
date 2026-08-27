@@ -429,8 +429,6 @@ function ensureWorker(): Worker {
         kind: new Int32Array(m.kindBuf),
         keyIdx: new Int32Array(m.keyIdxBuf),
         valIdx: new Int32Array(m.valIdxBuf),
-        keyTokIdx: new Int32Array(0),
-        valTokIdx: new Int32Array(0),
         meta: new Int32Array(m.metaBuf),
         subtreeRows: new Int32Array(m.subtreeRowsBuf),
         keys: m.keys,
@@ -1041,6 +1039,14 @@ document.addEventListener('pointerdown', clipRetry);
 document.addEventListener('touchstart', clipRetry, { passive: true });
 document.addEventListener('keydown', clipRetry);
 window.addEventListener('focus', clipRetry);
+
+// Compile the large-paste worker after landing listeners are ready. The
+// fallback keeps older browsers off the first interaction when possible.
+const idle = (window as Window & {
+  requestIdleCallback?: (callback: () => void) => number;
+}).requestIdleCallback;
+if (idle) idle.call(window, () => { ensureWorker(); });
+else setTimeout(() => { ensureWorker(); }, 1);
 
 // service worker (prod only)
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {

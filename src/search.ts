@@ -156,13 +156,13 @@ function findAllRe(vm: ViewModel, q: string, opts: SearchOpts): SearchState {
   return st;
 }
 
-// scan one SHORT string (interned key/val preview). `re` is compiled once per
-// QUERY by attachTree and passed in — compiling per row was 17k compiles for
-// 17k keys (audit F-06).
-function scanStr(s: string, q: string, opts: SearchOpts, re: RegExp | null): Int32Array | null {
+// scan one SHORT string (interned key/val preview). `needle` is folded once
+// per QUERY by attachTree; `re` is also compiled once per query. Compiling or
+// folding per row was 17k repeated operations on the bench-shaped tree.
+function scanStr(s: string, q: string, needle: string, opts: SearchOpts, re: RegExp | null): Int32Array | null {
   if (!q) return null;
   if (!opts.re) {
-    const N = opts.ci ? q.toLowerCase() : q;
+    const N = needle;
     if (N.length !== q.length) return null; // exotic needle fold — skip pool
     const H = opts.ci ? s.toLowerCase() : s;
     if (H.length !== s.length && opts.ci) return null; // exotic string fold
@@ -204,10 +204,11 @@ export function attachTree(
       re = null; // bad pattern — pools scan to all-null, matches text-path behavior
     }
   }
+  const needle = st.opts.ci ? st.q.toLowerCase() : st.q;
   const keyHit: (Int32Array | null)[] = new Array(ft.keys.length);
-  for (let i = 0; i < ft.keys.length; i++) keyHit[i] = scanStr(ft.keys[i], st.q, st.opts, re);
+  for (let i = 0; i < ft.keys.length; i++) keyHit[i] = scanStr(ft.keys[i], st.q, needle, st.opts, re);
   const valHit: (Int32Array | null)[] = new Array(ft.vals.length);
-  for (let i = 0; i < ft.vals.length; i++) valHit[i] = scanStr(ft.vals[i], st.q, st.opts, re);
+  for (let i = 0; i < ft.vals.length; i++) valHit[i] = scanStr(ft.vals[i], st.q, needle, st.opts, re);
   const nodeHit = new Uint8Array(ft.rowCount);
   const KEYIDX = ft.keyIdx;
   const VALIDX = ft.valIdx;

@@ -65,7 +65,7 @@ export function emitJson(
   indent: number | '\t',
   _rawLenHint: number,
 ): EmitResult {
-  const pretty = JSON.stringify(value, null, indent);
+  const pretty = JSON.stringify(value, null, indent) ?? 'null';
   const indLen = typeof indent === 'number' ? indent : 1;
   const plen = pretty.length;
 

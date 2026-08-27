@@ -12,7 +12,7 @@ Post walk-diet split (2.76MB-minified / 5MB-pretty paste payload, min-of-7): par
 
 Breaking one is a regression even with green tests:
 
-- **Single pass** — `emitJson` walks the value once, emitting pretty + tokens + line index together. Tree is LAZY: `flatten()` rebuilds it on demand (first Tree open / worker `getTree`), same philosophy as lazy labels/min. No second scan on the paste path, no re-stringify on toggle.
+- **Single pass** — `JSON.stringify` creates the pretty source once; `emitJson` walks the value once to emit tokens + line index. Tree is LAZY: `flatten()` rebuilds it on demand (first Tree open / worker `getTree`), same philosophy as lazy labels/min. No second value walk or pretty rebuild on the paste path, no re-stringify on toggle.
 - **No rope** — JSC punishes `out +=` piece-chains and closure-captured state in per-char paths at ~19ns/char (measured). Hot writers keep state as true locals; a helper closure inside the per-char path is a measured regression.
 - **Punct tokens dropped by design** — braces/colons/commas render via base `code` color, which equals the punct color. Fuzz therefore compares token pairs against `tokenize(pretty)` **filtered to non-punct**. Re-adding them re-bloats the table.
 - **lineStarts point after the `\n`, before the indent** — recording them later leaks each line's indent into the previous row: the flush-left bug. `textHtml` ends line *i* at `LS[i+1] - 1`.
