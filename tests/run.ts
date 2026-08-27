@@ -2,6 +2,7 @@
 import assert from 'node:assert';
 import { tokenize, T_STR, T_NUM, T_KEY, T_PUNCT, T_TRUE, T_FALSE, T_NULL } from '../src/tokenizer';
 import { parseJson, parseInput } from '../src/parse';
+import { emitJson } from '../src/serialize';
 import { buildView, ensureMin } from '../src/viewmodel';
 import { flatten, buildVisible } from '../src/tree';
 import { rangeHtml } from '../src/highlight';
@@ -87,6 +88,27 @@ ok('buildView tab indent', () => {
   assert.ok(vm.pretty.startsWith('{\n\t"a"'));
 });
 
+ok('emitJson matches stringify for escaped values and tokens', () => {
+  const nasty = '\u0000"\\\n' + String.fromCharCode(0xd800);
+  const value = { 'quote"key': nasty, n: -0, big: 1e21 };
+  const r = emitJson(value, 2, 64);
+  const expected = JSON.stringify(value, null, 2);
+  assert.strictEqual(r.pretty, expected);
+  const toks = tokenize(expected);
+  const ref: number[] = [];
+  for (let i = 0; i < toks.length; i += 2) {
+    if (toks[i + 1] !== T_PUNCT) ref.push(toks[i], toks[i + 1]);
+  }
+  assert.deepStrictEqual([...r.tokens], ref);
+});
+
+ok('emitJson handles one-line roots', () => {
+  const scalar = emitJson(1, 2, 8);
+  assert.strictEqual(scalar.pretty, '1');
+  assert.strictEqual(scalar.lines, 1);
+  assert.deepStrictEqual([...scalar.tokens], [1, T_NUM]);
+});
+
 // ---------- tree flatten ----------
 ok('flatten counts + subtreeRows', () => {
   const ft = flatten({ a: 1, b: [2, 3], c: { d: null } });
@@ -138,6 +160,12 @@ ok('flatten columns stay aligned: leaf valIdx resolves, branch valIdx = -1', () 
   // spot: row 1 is leaf "a": 1
   assert.strictEqual(ft.keys[ft.keyIdx[1]], 'a');
   assert.strictEqual(ft.vals[ft.valIdx[1]], '1');
+});
+
+ok('flatten interns repeated leaf previews', () => {
+  const ft = flatten({ a: 'same', b: 'same', c: 1 });
+  assert.strictEqual(ft.valIdx[1], ft.valIdx[2]);
+  assert.strictEqual(ft.vals.length, 2);
 });
 
 // ---------- highlighter ----------

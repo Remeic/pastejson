@@ -11,8 +11,6 @@ export interface FlatTree {
   kind: Int32Array; // K_* above (Int32Array: skips conversion pass)
   keyIdx: Int32Array; // index into keys[], -1 = none (empty until materializeLabels)
   valIdx: Int32Array; // index into vals[] (leaves), -1 = branch (empty until materializeLabels)
-  keyTokIdx: Int32Array; // token pair-index of key span, -1 = none
-  valTokIdx: Int32Array; // token pair-index of leaf value span, -1 = branch
   meta: Int32Array; // branch: child count finalized on pop
   subtreeRows: Int32Array; // rows in subtree incl self
   keys: string[];
@@ -80,12 +78,11 @@ export function flatten(value: unknown, capHint = 1024): FlatTree {
   const valIdxA = new GrowInt32(cap);
   const metaA = new GrowInt32(cap);
   const subtreeA = new GrowInt32(cap);
-  const keyTokA = new GrowInt32(cap); // flatten has no token table -> always -1
-  const valTokA = new GrowInt32(cap);
 
   const keys: string[] = [];
   const vals: string[] = [];
   const keyIntern = new Map<string, number>();
+  const valIntern = new Map<string, number>();
 
   let rowCount = 0;
 
@@ -95,6 +92,17 @@ export function flatten(value: unknown, capHint = 1024): FlatTree {
       id = keys.length;
       keys.push(k);
       keyIntern.set(k, id);
+    }
+    return id;
+  };
+
+  const internVal = (v: unknown): number => {
+    const s = preview(v);
+    let id = valIntern.get(s);
+    if (id === undefined) {
+      id = vals.length;
+      vals.push(s);
+      valIntern.set(s, id);
     }
     return id;
   };
@@ -142,8 +150,6 @@ export function flatten(value: unknown, capHint = 1024): FlatTree {
     const row = rowCount++;
     depthA.push(depth);
     keyIdxA.push(keyIdx);
-    keyTokA.push(-1);
-    valTokA.push(-1);
     metaA.push(0);
     if (isBranch(v)) {
       kindA.push(Array.isArray(v) ? K_ARR : K_OBJ);
@@ -151,8 +157,7 @@ export function flatten(value: unknown, capHint = 1024): FlatTree {
       subtreeA.push(-1); // pending finalize
     } else {
       kindA.push(K_LEAF);
-      valIdxA.push(vals.length);
-      vals.push(preview(v));
+      valIdxA.push(internVal(v));
       subtreeA.push(1);
     }
     return row;
@@ -202,8 +207,6 @@ export function flatten(value: unknown, capHint = 1024): FlatTree {
     kind: kindA.trim(),
     keyIdx: keyIdxA.trim(),
     valIdx: valIdxA.trim(),
-    keyTokIdx: keyTokA.trim(),
-    valTokIdx: valTokA.trim(),
     meta: metaA.trim(),
     subtreeRows: subtreeA.trim(),
     keys,
