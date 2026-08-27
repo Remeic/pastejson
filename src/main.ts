@@ -60,6 +60,7 @@ let indent: number | '\t' = 2;
 let reqId = 0;
 let lastRaw = '';
 let bytesIn = 0;
+let lastFormatMs = 0;
 let wantCopyMin = false;
 let scroller: VScroll | null = null;
 
@@ -120,12 +121,23 @@ function toast(msg: string): void {
 
 function fmtStatus(ms: number): void {
   if (!vm) return;
+  lastFormatMs = ms;
   const parts = [
     vm.docs > 0 ? `${vm.docs.toLocaleString('en-US')} docs · JSONL` : humanBytes(bytesIn),
     `${vm.lines.toLocaleString('en-US')} lines`,
     ms > 0 ? `${Math.round(ms)} ms` : '',
   ];
   statusbar.textContent = parts.filter(Boolean).join('  ·  ');
+}
+
+function fmtTreeStatus(): void {
+  if (!ft) return;
+  statusbar.textContent = `${ft.rowCount.toLocaleString('en-US')} nodes`;
+}
+
+function restoreViewStatus(view: ViewName): void {
+  if (view === 'text') fmtStatus(lastFormatMs);
+  else if (view === 'tree') fmtTreeStatus();
 }
 
 // ---------- diff (lazy island orchestration) ----------
@@ -244,7 +256,7 @@ function exitDiff(): void {
   curView = 'text';
   syncSeg('text');
   mountScroller('text', 0);
-  statusbar.textContent = '';
+  restoreViewStatus('text');
 }
 
 // ---------- edit (back to the fix-it textarea, content kept) ----------
@@ -358,8 +370,8 @@ async function openSearch(): Promise<void> {
   if (curView !== 'text' && curView !== 'tree') {
     curView = 'text';
     syncSeg('text');
-    statusbar.textContent = '';
     mountScroller('text', -1);
+    restoreViewStatus('text');
   } else if (curView === 'tree' && ft && searchSt && !searchSt.tree) {
     mod.attachTree(searchSt, ft, visibleRows);
     scroller?.repaint();
@@ -443,7 +455,7 @@ function ensureWorker(): Worker {
         updSearchCount();
       }
       if (mode === 'loaded' && curView === 'tree' && scroller) {
-        statusbar.textContent = `${ft.rowCount.toLocaleString('en-US')} nodes`;
+        fmtTreeStatus();
         scroller.setRowCount(visibleRows.length);
         if (searchSt?.tree && searchOpen) scroller.repaint();
       }
@@ -779,6 +791,7 @@ toolbar.addEventListener('click', (e) => {
     // preserve scroll position across views by visual fraction
     const frac = scroller ? scroller.host.scrollTop / Math.max(1, scroller.host.scrollHeight) : 0;
     mountScroller(v, -1);
+    restoreViewStatus(v);
     if (scroller) scroller.host.scrollTop = frac * scroller.host.scrollHeight;
     // match counts are view-scoped (text offsets vs visible nodes)
     if (searchOpen) updSearchCount();
@@ -836,7 +849,9 @@ $<HTMLSelectElement>('sel-indent').addEventListener('change', (e) => {
       syncSeg('text');
     }
     mountScroller(curView, 0);
-    fmtStatus(performance.now() - t0);
+    const ms = performance.now() - t0;
+    fmtStatus(ms);
+    if (curView === 'tree') fmtTreeStatus();
   } else {
     ensureWorker().postMessage({ type: 'reformat', id: reqId, indent });
   }
