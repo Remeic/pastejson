@@ -70,6 +70,41 @@ export function planBrowserSessions(totalRuns: number, sessions: number): number
   return Array.from({ length: sessions }, (_, i) => base + (i < extra ? 1 : 0));
 }
 
+export interface BrowserBenchConfig {
+  bytes: number;
+  runs: number;
+  sessions: number;
+  enforce: boolean;
+}
+
+function positiveEnvInt(
+  env: Record<string, string | undefined>,
+  name: string,
+  fallback: number,
+): number {
+  const raw = env[name];
+  if (raw === undefined) return fallback;
+  if (!/^[1-9]\d*$/.test(raw)) throw new RangeError(`${name} must be a positive integer`);
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value)) throw new RangeError(`${name} is too large`);
+  return value;
+}
+
+export function readBrowserConfig(
+  env: Record<string, string | undefined>,
+): BrowserBenchConfig {
+  const mib = positiveEnvInt(env, 'PASTEJSON_BENCH_MIB', DEFAULT_BROWSER_MIB);
+  const runs = positiveEnvInt(env, 'PASTEJSON_BENCH_RUNS', 30);
+  const sessions = positiveEnvInt(env, 'PASTEJSON_BENCH_SESSIONS', 5);
+  const bytes = mib * MIB;
+  if (!Number.isSafeInteger(bytes)) throw new RangeError('PASTEJSON_BENCH_MIB is too large');
+  planBrowserSessions(runs, sessions);
+  const enforceRaw = env.PASTEJSON_BENCH_ENFORCE;
+  if (enforceRaw !== undefined && enforceRaw !== '0' && enforceRaw !== '1')
+    throw new RangeError('PASTEJSON_BENCH_ENFORCE must be 0 or 1');
+  return { bytes, runs, sessions, enforce: enforceRaw !== '0' };
+}
+
 export function percentile(values: number[], quantile: number): number {
   if (values.length === 0) throw new RangeError('percentile needs at least one value');
   if (!(quantile > 0 && quantile <= 1)) throw new RangeError('quantile must be in (0, 1]');

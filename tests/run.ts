@@ -11,6 +11,11 @@ import { diffHtml, sbsHtml } from '../src/diffview';
 import { treeHtml } from '../src/render';
 import { textHtml } from '../src/render';
 import {
+  makeWorkerPreview,
+  prettyChunkAt,
+  prettyChunkCount,
+} from '../src/worker-preview';
+import {
   findAll,
   lineOf,
   rowHtml,
@@ -25,6 +30,7 @@ import {
   makeBrowserFixture,
   percentile,
   planBrowserSessions,
+  readBrowserConfig,
   summarizeBrowserSamples,
   type BrowserSample,
 } from '../scripts/bench-browser-core';
@@ -771,6 +777,35 @@ ok('browser bench: sessions distribute every run deterministically', () => {
   assert.throws(() => planBrowserSessions(2, 3), RangeError);
 });
 
+ok('browser bench: config defaults to the published protocol', () => {
+  assert.deepStrictEqual(readBrowserConfig({}), {
+    bytes: 100 * 1024 ** 2,
+    runs: 30,
+    sessions: 5,
+    enforce: true,
+  });
+  assert.deepStrictEqual(readBrowserConfig({
+    PASTEJSON_BENCH_MIB: '1',
+    PASTEJSON_BENCH_RUNS: '3',
+    PASTEJSON_BENCH_SESSIONS: '1',
+    PASTEJSON_BENCH_ENFORCE: '0',
+  }), {
+    bytes: 1024 ** 2,
+    runs: 3,
+    sessions: 1,
+    enforce: false,
+  });
+});
+
+ok('browser bench: config rejects misleading run shapes', () => {
+  assert.throws(() => readBrowserConfig({ PASTEJSON_BENCH_MIB: '0' }), RangeError);
+  assert.throws(() => readBrowserConfig({ PASTEJSON_BENCH_RUNS: '1.5' }), RangeError);
+  assert.throws(() => readBrowserConfig({
+    PASTEJSON_BENCH_RUNS: '2',
+    PASTEJSON_BENCH_SESSIONS: '3',
+  }), RangeError);
+});
+
 ok('browser bench: nearest-rank percentiles do not interpolate claims', () => {
   assert.strictEqual(percentile([4, 1, 3, 2], 0.5), 2);
   assert.strictEqual(percentile([4, 1, 3, 2], 0.95), 4);
@@ -818,6 +853,40 @@ ok('browser bench: every failed or unmeasured contract is explicit', () => {
     'memory-unavailable',
     'correctness',
   ]);
+});
+
+// ---------- progressive worker delivery ----------
+ok('worker preview: complete first lines retain non-punct token contract', () => {
+  const pretty = JSON.stringify({ items: [{ id: 1, ok: true }, { id: 2, ok: false }] }, null, 2);
+  const preview = makeWorkerPreview(pretty, 6);
+  assert.strictEqual(preview.pretty, pretty.split('\n').slice(0, 6).join('\n'));
+  assert.strictEqual(preview.lines, 6);
+  assert.deepStrictEqual([...preview.lineStarts], [0, 2, 15, 21, 36, 53]);
+  const fullTokens = tokenize(preview.pretty);
+  const nonPunct: number[] = [];
+  for (let i = 0; i < fullTokens.length; i += 2) {
+    if (fullTokens[i + 1] !== T_PUNCT) nonPunct.push(fullTokens[i], fullTokens[i + 1]);
+  }
+  assert.deepStrictEqual([...preview.tokens], nonPunct);
+});
+
+ok('worker preview: one-line roots and invalid limits are explicit', () => {
+  const preview = makeWorkerPreview('42', 96);
+  assert.strictEqual(preview.pretty, '42');
+  assert.strictEqual(preview.lines, 1);
+  assert.deepStrictEqual([...preview.lineStarts], [0]);
+  assert.throws(() => makeWorkerPreview('{}', 0), RangeError);
+});
+
+ok('worker delivery: pretty chunks are complete and bounded', () => {
+  assert.strictEqual(prettyChunkCount('abcdefghij', 4), 3);
+  assert.deepStrictEqual(
+    [0, 1, 2].map((i) => prettyChunkAt('abcdefghij', i, 4)),
+    ['abcd', 'efgh', 'ij'],
+  );
+  assert.strictEqual(prettyChunkCount('', 4), 0);
+  assert.throws(() => prettyChunkCount('x', 0), RangeError);
+  assert.throws(() => prettyChunkAt('x', 1, 4), RangeError);
 });
 
 console.log(`\n${passed} tests passed`);

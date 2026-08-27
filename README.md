@@ -39,8 +39,19 @@ bun run dev      # vite dev server
 bun run test     # tests/run.ts
 bun tests/fuzz.ts  # byte-exact fuzz vs JSON.stringify
 bun run bench    # 5MB perf gate (exits non-zero on regression)
+bun run bench:browser  # 100 MiB real-Chrome 100–1–2 gate
 bun run build    # typecheck + single-file dist/
 ```
+
+The browser gate runs the production artifact in Chrome Stable for 30 samples
+across five fresh browser sessions. It requires a correct syntax-colored first
+viewport at ≤750 ms p50 / ≤1,000 ms p95, p95 paste-to-paint time ≤2× the
+same-run native `JSON.parse` + `JSON.stringify` floor, no main-thread task over
+50 ms, and ≤1.5 GiB retained Chrome process-tree RSS. The report includes the
+fixture SHA-256, browser/hardware identity, every raw sample, and the aggregate
+decision. Set `PASTEJSON_CHROME_PATH` when Chrome is not in its standard install
+location; for a plumbing smoke test, explicitly reduce `PASTEJSON_BENCH_MIB`,
+`PASTEJSON_BENCH_RUNS`, and `PASTEJSON_BENCH_SESSIONS`.
 
 ## Deploy
 
