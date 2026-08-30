@@ -29,7 +29,7 @@ export function firstTokenAt(tokens: Int32Array, offset: number): number {
   return ans;
 }
 
-// HTML for source range [start,end) using full-document token table.
+// HTML for source range [start,end) using an ordered token table.
 export function rangeHtml(src: string, tokens: Int32Array, start: number, end: number): string {
   const cnt = tokens.length >> 1;
   let html = '';

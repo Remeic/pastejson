@@ -186,14 +186,16 @@ export function tokenize(src: string): Int32Array {
 // boundary in production, so no token can begin before `start`; when a token
 // begins before `end`, its scan is allowed to finish past `end`. This keeps
 // the end-only token table semantics exact without a fixed lookahead guess.
-export function tokenizeWindow(src: string, start: number, end: number): Int32Array {
+// An optional buffer lets the Find painter reuse capacity across cache misses.
+export function tokenizeWindow(src: string, start: number, end: number, reuse?: Int32Array): Int32Array {
   const n = src.length;
   const limit = Math.min(n, Math.max(start, end));
   // Window token counts are usually far below source length. Start with a
   // small paint-sized buffer and grow only for unusually dense windows.
-  let cap = 256;
+  let cap = reuse?.length ?? 256;
+  if (cap < 256) cap = 256;
   let len = 0;
-  let out = new Int32Array(cap);
+  let out = reuse && reuse.length >= cap ? reuse : new Int32Array(cap);
 
   let i = start;
   let done = false;
@@ -314,5 +316,5 @@ export function tokenizeWindow(src: string, start: number, end: number): Int32Ar
     }
   }
 
-  return len === out.length ? out : out.slice(0, len);
+  return len === out.length ? out : out.subarray(0, len);
 }

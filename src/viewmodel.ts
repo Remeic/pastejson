@@ -18,6 +18,7 @@ export interface ViewModel {
   lines: number;
   maxLen: number; // longest pretty line length (for h-scroll width)
   paintTokens: Int32Array | null; // one most-recent Find window
+  paintTokenBuffer: Int32Array | null; // reusable capacity for Find misses
   paintTokenStart: number;
   paintTokenEnd: number;
   tokM: Int32Array | null; // lazy
@@ -36,6 +37,7 @@ export function buildView(value: unknown, indent: number | '\t', bytesIn: number
     lines: r.lines,
     maxLen: r.maxLen,
     paintTokens: null,
+    paintTokenBuffer: null,
     paintTokenStart: -1,
     paintTokenEnd: -1,
     tokM: null,

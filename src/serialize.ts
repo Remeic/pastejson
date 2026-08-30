@@ -11,7 +11,6 @@
 //   per-child path is FULLY INLINED — no closure calls per token/line.
 // - escLen regex fast path beats charCode loops on JSC (agent bench);
 //   scanString-over-pretty measured slower — do not reintroduce.
-// Token pairs are EXACTLY tokenize(JSON.stringify(...)) minus punct — fuzz-verified.
 export interface EmitResult {
   pretty: string;
   lineStarts: Uint32Array;

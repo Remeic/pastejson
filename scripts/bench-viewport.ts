@@ -74,7 +74,11 @@ const median = (values: number[]): number => {
   return sorted[sorted.length >> 1];
 };
 
-function samples(fn: () => void, count = 15): number[] {
+let sink = 0;
+
+const SAMPLE_COUNT = 31;
+
+function samples(fn: () => void, count = SAMPLE_COUNT): number[] {
   const values: number[] = [];
   for (let i = 0; i < count; i++) {
     const t0 = performance.now();
@@ -86,57 +90,56 @@ function samples(fn: () => void, count = 15): number[] {
 
 // Cold paint: every sample gets a new VM and therefore cannot reuse the
 // one-window cache. Build is intentionally outside this profile.
-const coldVms = Array.from({ length: 15 }, () => buildView(value, 2, JSON.stringify(value).length));
+const coldVms = Array.from({ length: SAMPLE_COUNT }, () => buildView(value, 2, JSON.stringify(value).length));
 const coldPaint = median(coldVms.map((coldVm) => {
   const t0 = performance.now();
-  textHtml(coldVm, windows[1], 80);
+  sink += textHtml(coldVm, windows[1], 80).length;
   return performance.now() - t0;
 }));
 
 // Sequential scroll: each sample visits distinct windows in order. The
 // cache is a miss for every window, including the wrap to the first window.
-const sequenceVms = Array.from({ length: 15 }, () => buildView(value, 2, JSON.stringify(value).length));
+const sequenceVms = Array.from({ length: SAMPLE_COUNT }, () => buildView(value, 2, JSON.stringify(value).length));
 const sequentialPaint = median(sequenceVms.map((sequenceVm) => {
   const t0 = performance.now();
-  for (const first of windows) textHtml(sequenceVm, first, 80);
+  for (const first of windows) sink += textHtml(sequenceVm, first, 80).length;
   return performance.now() - t0;
 }));
 
 const buildFirstPaint = median(samples(() => {
   const firstVm = buildView(value, 2, JSON.stringify(value).length);
-  textHtml(firstVm, windows[1], 80);
+  sink += textHtml(firstVm, windows[1], 80).length;
 }));
 
 const fullTokenBuild = median(samples(() => {
-  syntaxTokens(vm.pretty);
+  sink += syntaxTokens(vm.pretty).length;
 }));
 const localTokenBuild = median(samples(() => {
   const last = Math.min(windows[1] + 80, vm.lines);
-  tokenizeWindow(vm.pretty, vm.lineStarts[windows[1]], last < vm.lines ? vm.lineStarts[last] - 1 : vm.pretty.length);
+  sink += tokenizeWindow(vm.pretty, vm.lineStarts[windows[1]], last < vm.lines ? vm.lineStarts[last] - 1 : vm.pretty.length).length;
 }));
-
 const searchCases = [
   { name: 'zero-hit', q: 'not-present', opts: { ci: true, re: false } },
   { name: 'normal-hit', q: 'Milano', opts: { ci: true, re: false } },
   { name: 'cross-line', q: '0,\n      "guid"', opts: { ci: true, re: false } },
 ] as const;
 for (const searchCase of searchCases) {
-  const coldSearchVms = Array.from({ length: 15 }, () => buildView(value, 2, JSON.stringify(value).length));
+  const coldSearchVms = Array.from({ length: SAMPLE_COUNT }, () => buildView(value, 2, JSON.stringify(value).length));
   const coldSearchPaint = median(coldSearchVms.map((searchVm) => {
     const st = findAll(searchVm, searchCase.q, searchCase.opts);
     const t0 = performance.now();
-    rowHtml(searchVm, st, windows[1], 80);
+    sink += rowHtml(searchVm, st, windows[1], 80).length;
     return performance.now() - t0;
   }));
-  const sequenceSearchVms = Array.from({ length: 15 }, () => buildView(value, 2, JSON.stringify(value).length));
+  const sequenceSearchVms = Array.from({ length: SAMPLE_COUNT }, () => buildView(value, 2, JSON.stringify(value).length));
   const sequenceSearchPaint = median(sequenceSearchVms.map((searchVm) => {
     const st = findAll(searchVm, searchCase.q, searchCase.opts);
     const t0 = performance.now();
-    for (const first of windows) rowHtml(searchVm, st, first, 80);
+    for (const first of windows) sink += rowHtml(searchVm, st, first, 80).length;
     return performance.now() - t0;
   }));
-  console.log(`search ${searchCase.name} cold 80-row paint ${coldSearchPaint.toFixed(2)} ms (median of 15)`);
-  console.log(`search ${searchCase.name} sequential 3-window paint ${sequenceSearchPaint.toFixed(2)} ms (median of 15)`);
+  console.log(`search ${searchCase.name} cold 80-row paint ${coldSearchPaint.toFixed(2)} ms (median of ${SAMPLE_COUNT})`);
+  console.log(`search ${searchCase.name} sequential 3-window paint ${sequenceSearchPaint.toFixed(2)} ms (median of ${SAMPLE_COUNT})`);
 }
 
 console.log(`pretty ${(vm.pretty.length / 1048576).toFixed(2)} MB, ${vm.lines} lines`);
@@ -145,8 +148,9 @@ console.log(`local 3-window tables ${windows.map((first) => {
   const last = Math.min(first + 80, vm.lines);
   return tokenizeWindow(vm.pretty, vm.lineStarts[first], last < vm.lines ? vm.lineStarts[last] - 1 : vm.pretty.length).length >> 1;
 }).join(',')} pairs`);
-console.log(`full token construction ${fullTokenBuild.toFixed(2)} ms (median of 15)`);
-console.log(`local token construction ${localTokenBuild.toFixed(2)} ms (median of 15)`);
-console.log(`local cold first 80-row paint ${coldPaint.toFixed(2)} ms (median of 15, new VM each sample)`);
-console.log(`local sequential 3-window paint ${sequentialPaint.toFixed(2)} ms (median of 15, cache miss each window)`);
-console.log(`local build + first 80-row paint ${buildFirstPaint.toFixed(2)} ms (median of 15)`);
+console.log(`full token construction ${fullTokenBuild.toFixed(2)} ms (median of ${SAMPLE_COUNT})`);
+console.log(`local token construction ${localTokenBuild.toFixed(2)} ms (median of ${SAMPLE_COUNT})`);
+console.log(`local cold first 80-row paint ${coldPaint.toFixed(2)} ms (median of ${SAMPLE_COUNT}, new VM each sample)`);
+console.log(`local sequential 3-window paint ${sequentialPaint.toFixed(2)} ms (median of ${SAMPLE_COUNT}, cache miss each window)`);
+console.log(`local build + first 80-row paint ${buildFirstPaint.toFixed(2)} ms (median of ${SAMPLE_COUNT})`);
+console.log(`sink ${sink}`);

@@ -496,6 +496,7 @@ function ensureWorker(): Worker {
       lines: m.lines,
       maxLen: m.maxLen,
       paintTokens: null,
+      paintTokenBuffer: null,
       paintTokenStart: -1,
       paintTokenEnd: -1,
       tokM: null,
