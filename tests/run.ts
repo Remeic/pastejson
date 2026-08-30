@@ -20,6 +20,20 @@ import {
   type SearchOpts,
   type TreeHits,
 } from '../src/search';
+import {
+  PHASE1_KEYS,
+  PHASE2_KEYS,
+  makePhase1Reply,
+  makePhase2Reply,
+} from '../src/worker-protocol';
+import {
+  acceptPhase1,
+  acceptPhase2,
+  beginViewRequest,
+  resetViewState,
+  restartViewState,
+  type ProvisionalSeed,
+} from '../src/worker-state';
 
 let passed = 0;
 function ok(name: string, fn: () => void): void {
@@ -27,6 +41,174 @@ function ok(name: string, fn: () => void): void {
   passed++;
   console.log('  ✓', name);
 }
+
+// ---------- two-phase worker/main seam ----------
+const phaseSeed: ProvisionalSeed = {
+  prefixLineStarts: new Uint32Array([0, 3]),
+  rows: 2,
+  lastRowEnd: 7,
+};
+
+function phase2Buffers(): { lineStartsBuf: ArrayBuffer; tokPBuf: ArrayBuffer } {
+  return {
+    lineStartsBuf: new Uint32Array([0, 3, 7]).buffer,
+    tokPBuf: new Int32Array([2, 0, 6, 1]).buffer,
+  };
+}
+
+ok('two-phase protocol: fixed shapes keep pretty only in phase 1', () => {
+  const p1 = makePhase1Reply({
+    id: 4,
+    epoch: 2,
+    pretty: '{\n  "a": 1\n}',
+    indent: 2,
+    bytesIn: 9,
+    docs: 0,
+    ms: 1.5,
+  });
+  assert.deepStrictEqual(Object.keys(p1), PHASE1_KEYS);
+  assert.strictEqual(p1.pretty, '{\n  "a": 1\n}');
+  assert.ok(!('html' in p1));
+
+  const buffers = phase2Buffers();
+  const p2 = makePhase2Reply({
+    id: 4,
+    epoch: 2,
+    lines: 3,
+    maxLen: 8,
+    indent: 2,
+    bytesIn: 9,
+    docs: 0,
+    lsLen: 3,
+    ...buffers,
+    tokPLen: 4,
+  });
+  assert.deepStrictEqual(Object.keys(p2), PHASE2_KEYS);
+  assert.ok(!('pretty' in p2));
+  assert.ok(!('html' in p2));
+});
+
+ok('two-phase state: phase 1 becomes hydrated only after matching phase 2', () => {
+  const p1 = makePhase1Reply({
+    id: 10,
+    epoch: 1,
+    pretty: 'x\ny\nz',
+    indent: 2,
+    bytesIn: 5,
+    docs: 0,
+    ms: 2,
+  });
+  let state = beginViewRequest(10, 1);
+  state = acceptPhase1(state, p1, {
+    prefixLineStarts: new Uint32Array([0, 2]),
+    rows: 2,
+    lastRowEnd: 3,
+  });
+  assert.strictEqual(state.phase, 'provisional');
+  if (state.phase !== 'provisional') return;
+  assert.strictEqual(state.pretty, p1.pretty);
+  assert.deepStrictEqual([...state.prefixLineStarts], [0, 2]);
+  assert.strictEqual(state.rows, 2);
+
+  const buffers = phase2Buffers();
+  const p2 = makePhase2Reply({
+    id: 10,
+    epoch: 1,
+    lines: 3,
+    maxLen: 8,
+    indent: 2,
+    bytesIn: 5,
+    docs: 0,
+    lsLen: 3,
+    ...buffers,
+    tokPLen: 4,
+  });
+  state = acceptPhase2(state, p2);
+  assert.strictEqual(state.phase, 'hydrated');
+  if (state.phase !== 'hydrated') return;
+  assert.strictEqual(state.pretty, p1.pretty);
+  assert.deepStrictEqual([...state.lineStarts], [0, 3, 7]);
+  assert.deepStrictEqual([...state.tokP], [2, 0, 6, 1]);
+});
+
+ok('two-phase state: phase 2 without matching phase 1 is ignored', () => {
+  const state = beginViewRequest(11, 1);
+  const buffers = phase2Buffers();
+  const reply = makePhase2Reply({
+    id: 11,
+    epoch: 1,
+    lines: 3,
+    maxLen: 8,
+    indent: 2,
+    bytesIn: 5,
+    docs: 0,
+    lsLen: 3,
+    ...buffers,
+    tokPLen: 4,
+  });
+  assert.strictEqual(acceptPhase2(state, reply), state);
+});
+
+ok('two-phase state: stale phase 1 and phase 2 cannot replace a newer request', () => {
+  const oldP1 = makePhase1Reply({
+    id: 20,
+    epoch: 1,
+    pretty: 'old',
+    indent: 2,
+    bytesIn: 3,
+    docs: 0,
+    ms: 1,
+  });
+  let state = beginViewRequest(20, 1);
+  state = beginViewRequest(21, 1);
+  assert.strictEqual(acceptPhase1(state, oldP1, phaseSeed), state);
+
+  const newerP1 = makePhase1Reply({
+    id: 21,
+    epoch: 1,
+    pretty: 'new',
+    indent: 2,
+    bytesIn: 3,
+    docs: 0,
+    ms: 1,
+  });
+  state = acceptPhase1(state, newerP1, {
+    prefixLineStarts: new Uint32Array([0]),
+    rows: 1,
+    lastRowEnd: 3,
+  });
+  if (state.phase !== 'provisional') return;
+  const oldBuffers = phase2Buffers();
+  const oldP2 = makePhase2Reply({
+    id: 20,
+    epoch: 1,
+    lines: 3,
+    maxLen: 8,
+    indent: 2,
+    bytesIn: 3,
+    docs: 0,
+    lsLen: 3,
+    ...oldBuffers,
+    tokPLen: 4,
+  });
+  assert.strictEqual(acceptPhase2(state, oldP2), state);
+});
+
+ok('two-phase state: reset and worker restart reject old replies', () => {
+  const p1 = makePhase1Reply({
+    id: 30,
+    epoch: 1,
+    pretty: 'old',
+    indent: 2,
+    bytesIn: 3,
+    docs: 0,
+    ms: 1,
+  });
+  const reset = resetViewState(31, 1);
+  assert.strictEqual(acceptPhase1(reset, p1, phaseSeed), reset);
+  const restarted = restartViewState(30, 2);
+  assert.strictEqual(acceptPhase1(restarted, p1, phaseSeed), restarted);
+});
 
 // ---------- tokenizer ----------
 ok('tokenize basic object', () => {
