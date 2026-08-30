@@ -17,6 +17,9 @@ export interface ViewModel {
   lineStarts: Uint32Array; // offsets where each pretty-printed line starts
   lines: number;
   maxLen: number; // longest pretty line length (for h-scroll width)
+  paintTokens: Int32Array | null; // one most-recent Find window
+  paintTokenStart: number;
+  paintTokenEnd: number;
   tokM: Int32Array | null; // lazy
   bytesIn: number;
   docs: number; // >0 = JSONL document count
@@ -32,6 +35,9 @@ export function buildView(value: unknown, indent: number | '\t', bytesIn: number
     lineStarts: r.lineStarts,
     lines: r.lines,
     maxLen: r.maxLen,
+    paintTokens: null,
+    paintTokenStart: -1,
+    paintTokenEnd: -1,
     tokM: null,
     bytesIn,
     docs: 0,

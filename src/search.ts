@@ -302,7 +302,15 @@ export function rowHtml(
   const nm = S.length;
   const last = Math.min(first + count, L);
   if (first >= last) return '';
-  const TOK = tokenizeWindow(P, LS[first], last < L ? LS[last] - 1 : P.length);
+  const windowStart = LS[first];
+  const windowEnd = last < L ? LS[last] - 1 : P.length;
+  let TOK = vm.paintTokens;
+  if (TOK === null || vm.paintTokenStart !== windowStart || vm.paintTokenEnd !== windowEnd) {
+    TOK = tokenizeWindow(P, windowStart, windowEnd);
+    vm.paintTokens = TOK;
+    vm.paintTokenStart = windowStart;
+    vm.paintTokenEnd = windowEnd;
+  }
   let h = '';
   for (let i = first; i < last; i++) {
     const s = LS[i];

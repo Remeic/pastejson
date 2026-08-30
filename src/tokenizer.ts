@@ -189,8 +189,9 @@ export function tokenize(src: string): Int32Array {
 export function tokenizeWindow(src: string, start: number, end: number): Int32Array {
   const n = src.length;
   const limit = Math.min(n, Math.max(start, end));
-  let cap = ((limit - start) / 3) | 0;
-  if (cap < 32) cap = 32;
+  // Window token counts are usually far below source length. Start with a
+  // small paint-sized buffer and grow only for unusually dense windows.
+  let cap = 256;
   let len = 0;
   let out = new Int32Array(cap);
 
