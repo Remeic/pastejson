@@ -463,10 +463,11 @@ function mountProvisional(view: ProvisionalViewState): void {
     paint: (a, b) => provisionalTextHtml(view, a, b),
   });
   scroller.setRowCount(view.rows);
-  scroller.scrollToTop();
+  scroller.host.scrollTop = view.preserveScrollTop;
+  body.dataset.viewState = 'provisional';
   out.hidden = false;
   rawprev.hidden = true;
-  toolbar.hidden = true;
+  toolbar.hidden = false;
   statusbar.textContent = 'formatting…';
   setMode('working');
 }
@@ -488,7 +489,7 @@ function viewFromHydrated(state: HydratedViewState): ViewModel {
 }
 
 function hydrate(state: HydratedViewState): void {
-  const previousScrollTop = scroller?.host.scrollTop ?? 0;
+  const previousScrollTop = state.preserveScrollTop;
   const keepTextScroller = scroller !== null && curView === 'text';
   vm = viewFromHydrated(state);
   bytesIn = state.bytesIn;
@@ -498,6 +499,7 @@ function hydrate(state: HydratedViewState): void {
   rawprev.hidden = true;
   out.hidden = false;
   toolbar.hidden = false;
+  body.dataset.viewState = 'hydrated';
   if (curView === 'diff') {
     curView = 'text';
     syncSeg('text');
@@ -573,9 +575,7 @@ function ensureWorker(): Worker {
       return;
     }
     if ('phase' in m && m.phase === 1) {
-      const next = acceptPhase1(workerView, m as Phase1Reply, {
-        ...scanProvisional(m.pretty, provisionalRows()),
-      });
+      const next = acceptPhase1(workerView, m as Phase1Reply, scanProvisional(m.pretty, provisionalRows()));
       if (next === workerView || next.phase !== 'provisional') return;
       workerView = next;
       mountProvisional(next);
@@ -604,6 +604,7 @@ function load(raw: string): void {
   lastRaw = raw;
   bytesIn = raw.length;
   errbanner.hidden = true;
+  delete body.dataset.viewState;
   rawprev.hidden = true;
   diffRes = null; // new doc invalidates any diff
   alignedRes = null;
@@ -659,6 +660,7 @@ function showError(
   col = 0,
   lineText = '',
 ): void {
+  delete body.dataset.viewState;
   setMode('error');
   out.hidden = true;
   toolbar.hidden = false;
@@ -779,6 +781,7 @@ function mountScroller(v: ViewName, anchorTopVisual: number): void {
 }
 
 function enterView(ms: number): void {
+  body.dataset.viewState = 'hydrated';
   rawprev.hidden = true;
   ft = null; // rebuilt lazily on first tree mount (or reused if same doc+view switch)
   if (curView === 'diff') {
@@ -945,7 +948,7 @@ $<HTMLSelectElement>('sel-indent').addEventListener('change', (e) => {
   if (!vm) return;
   reqId++;
   workerView = parsedValue === undefined
-    ? beginViewRequest(reqId, workerEpoch)
+    ? beginViewRequest(reqId, workerEpoch, scroller?.host.scrollTop ?? 0)
     : idleViewState(reqId, workerEpoch);
   closeSearch(); // pretty rebuilt — offsets shifted
   diffRes = null; // pretty changed — any diff is stale
@@ -965,8 +968,8 @@ $<HTMLSelectElement>('sel-indent').addEventListener('change', (e) => {
     fmtStatus(ms);
     if (curView === 'tree') fmtTreeStatus();
   } else {
+    body.dataset.viewState = 'pending';
     setMode('working');
-    toolbar.hidden = true;
     ensureWorker().postMessage({ type: 'reformat', id: reqId, epoch: workerEpoch, indent });
   }
 });
@@ -991,6 +994,7 @@ async function copyText(s: string): Promise<void> {
 function resetToLanding(): void {
   reqId++;
   workerView = idleViewState(reqId, workerEpoch);
+  delete body.dataset.viewState;
   vm = null;
   ft = null;
   parsedValue = undefined;

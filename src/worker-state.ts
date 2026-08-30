@@ -21,6 +21,7 @@ export interface IdleViewState {
 export interface PendingViewState {
   phase: 'pending';
   request: RequestMetadata;
+  preserveScrollTop: number;
 }
 
 export interface ProvisionalViewState {
@@ -31,6 +32,7 @@ export interface ProvisionalViewState {
   bytesIn: number;
   docs: number;
   ms: number;
+  preserveScrollTop: number;
   prefixLineStarts: Uint32Array;
   rows: number;
   lastRowEnd: number;
@@ -44,6 +46,7 @@ export interface HydratedViewState {
   bytesIn: number;
   docs: number;
   ms: number;
+  preserveScrollTop: number;
   lineStarts: Uint32Array;
   lines: number;
   maxLen: number;
@@ -102,8 +105,16 @@ export function idleViewState(id: number, epoch: number): IdleViewState {
   return { phase: 'idle', request: { id, epoch } };
 }
 
-export function beginViewRequest(id: number, epoch: number): PendingViewState {
-  return { phase: 'pending', request: { id, epoch } };
+export function beginViewRequest(
+  id: number,
+  epoch: number,
+  preserveScrollTop = 0,
+): PendingViewState {
+  return {
+    phase: 'pending',
+    request: { id, epoch },
+    preserveScrollTop: Math.max(0, preserveScrollTop),
+  };
 }
 
 export function acceptPhase1(
@@ -121,6 +132,7 @@ export function acceptPhase1(
     bytesIn: reply.bytesIn,
     docs: reply.docs,
     ms: reply.ms,
+    preserveScrollTop: state.preserveScrollTop,
     prefixLineStarts: seed.prefixLineStarts,
     rows: seed.rows,
     lastRowEnd: seed.lastRowEnd,
@@ -148,6 +160,7 @@ export function acceptPhase2(
     bytesIn: state.bytesIn,
     docs: state.docs,
     ms: state.ms,
+    preserveScrollTop: state.preserveScrollTop,
     lineStarts: new Uint32Array(reply.lineStartsBuf, 0, reply.lsLen),
     lines: reply.lines,
     maxLen: reply.maxLen,
