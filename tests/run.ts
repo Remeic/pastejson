@@ -1,6 +1,6 @@
 // Plain assert-based test runner. Run: bun tests/run.ts
 import assert from 'node:assert';
-import { tokenize, T_STR, T_NUM, T_KEY, T_PUNCT, T_TRUE, T_FALSE, T_NULL } from '../src/tokenizer';
+import { tokenize, tokenizeWindow, T_STR, T_NUM, T_KEY, T_PUNCT, T_TRUE, T_FALSE, T_NULL } from '../src/tokenizer';
 import { parseJson, parseInput } from '../src/parse';
 import { emitJson } from '../src/serialize';
 import { buildView, ensureMin } from '../src/viewmodel';
@@ -53,6 +53,22 @@ ok('tokenize literals true/false/null', () => {
 ok('tokenize numbers with exponent', () => {
   const t = tokenize('-12.34e+5');
   assert.deepStrictEqual([...t], [9, T_NUM]);
+});
+
+ok('tokenizeWindow completes a token beyond the requested end', () => {
+  const src = JSON.stringify({ escaped: 'quote"\\\nvalue', tail: 1 }, null, 2);
+  const end = src.indexOf('quote') + 3;
+  const local = tokenizeWindow(src, 0, end);
+  const global = tokenize(src);
+  const expected: number[] = [];
+  let lastEnd = -1;
+  for (let i = 0; i < global.length; i += 2) {
+    if (global[i + 1] === T_PUNCT) continue;
+    expected.push(global[i], global[i + 1]);
+    lastEnd = global[i];
+    if (lastEnd > end) break;
+  }
+  assert.deepStrictEqual([...local], expected);
 });
 
 // ---------- parse errors ----------
