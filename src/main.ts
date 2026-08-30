@@ -6,6 +6,7 @@ import { flatten, buildVisible } from './tree';
 import { VScroll } from './vscroll';
 import {
   textHtml,
+  provisionalTextHtml,
   treeHtml,
   minHtml,
   minRowCount,
@@ -15,6 +16,18 @@ import { esc } from './highlight';
 import PJWorker from './worker?worker&inline';
 import type { AlignedResult, DiffResult } from './diffview';
 import type { SearchState } from './search';
+import type { FormatReply, Phase1Reply, Phase2Reply } from './worker-protocol';
+import {
+  acceptPhase1,
+  acceptPhase2,
+  beginViewRequest,
+  idleViewState,
+  restartViewState,
+  scanProvisional,
+  type HydratedViewState,
+  type ProvisionalViewState,
+  type WorkerViewState,
+} from './worker-state';
 
 const ROW_H = 20;
 const WORKER_THRESHOLD = 256 * 1024;
@@ -60,6 +73,8 @@ let mode: Mode = 'landing';
 let curView: ViewName = 'text';
 let indent: number | '\t' = 2;
 let reqId = 0;
+let workerEpoch = 1;
+let workerView: WorkerViewState = idleViewState(reqId, workerEpoch);
 let lastRaw = '';
 let bytesIn = 0;
 let lastFormatMs = 0;
@@ -405,43 +420,112 @@ function closeSearch(): void {
 
 // ---------- worker ----------
 let worker: Worker | null = null;
+
+type TreeReply = {
+  id: number;
+  epoch: number;
+  type: 'tree';
+  rowCount: number;
+  depthBuf: ArrayBuffer;
+  kindBuf: ArrayBuffer;
+  keyIdxBuf: ArrayBuffer;
+  valIdxBuf: ArrayBuffer;
+  metaBuf: ArrayBuffer;
+  subtreeRowsBuf: ArrayBuffer;
+  keys: string[];
+  vals: string[];
+};
+
+type MinReply = { id: number; epoch: number; type: 'min'; min: string; tokMBuf: ArrayBuffer };
+type WorkerErrorReply = {
+  id: number;
+  epoch: number;
+  ok: false;
+  message: string;
+  offset: number;
+  line: number;
+  col: number;
+  lineText: string;
+};
+type WorkerReply = FormatReply | TreeReply | MinReply | WorkerErrorReply;
+
+function provisionalRows(): number {
+  const viewport = viewEl.clientHeight || 800;
+  return Math.max(96, Math.ceil(viewport / ROW_H) + OVERSCAN * 2 + 1);
+}
+
+function mountProvisional(view: ProvisionalViewState): void {
+  scroller?.destroy();
+  viewEl.innerHTML = '';
+  scroller = new VScroll(viewEl, {
+    rowH: ROW_H,
+    overscan: OVERSCAN,
+    paint: (a, b) => provisionalTextHtml(view, a, b),
+  });
+  scroller.setRowCount(view.rows);
+  scroller.scrollToTop();
+  out.hidden = false;
+  rawprev.hidden = true;
+  toolbar.hidden = true;
+  statusbar.textContent = 'formatting…';
+  setMode('working');
+}
+
+function viewFromHydrated(state: HydratedViewState): ViewModel {
+  return {
+    pretty: state.pretty,
+    min: null,
+    source: undefined,
+    indent: state.indent,
+    lineStarts: state.lineStarts,
+    lines: state.lines,
+    maxLen: state.maxLen,
+    tokP: state.tokP,
+    tokM: null,
+    bytesIn: state.bytesIn,
+    docs: state.docs,
+  };
+}
+
+function hydrate(state: HydratedViewState): void {
+  const previousScrollTop = scroller?.host.scrollTop ?? 0;
+  const keepTextScroller = scroller !== null && curView === 'text';
+  vm = viewFromHydrated(state);
+  bytesIn = state.bytesIn;
+  ft = null;
+  expanded = null;
+  visibleRows = null;
+  rawprev.hidden = true;
+  out.hidden = false;
+  toolbar.hidden = false;
+  if (curView === 'diff') {
+    curView = 'text';
+    syncSeg('text');
+  }
+
+  if (keepTextScroller && scroller) {
+    // Keep the existing VScroll host and rows. Only the painter and total
+    // height change, so the phase-1 HTML stays visible until the next frame.
+    scroller.setPainter((a, b) => textHtml(vm!, a, b));
+    scroller.setWidth(state.maxLen * charW + 72);
+    scroller.setRowCount(state.lines);
+    scroller.host.scrollTop = previousScrollTop;
+    setMode('loaded');
+    fmtStatus(state.ms);
+    return;
+  }
+  enterView(state.ms);
+}
+
 function ensureWorker(): Worker {
   if (worker) return worker;
-  worker = new PJWorker();
-  worker.onmessage = (
-    e: MessageEvent<
-      | {
-          id: number;
-          ok: boolean;
-          pretty: string;
-          lines: number;
-          maxLen: number;
-          indent: number | '\t';
-          docs: number;
-          lsLen: number;
-          lineStartsBuf: ArrayBuffer;
-          ms?: number;
-          message?: string;
-          offset?: number;
-        }
-      | {
-          id: number;
-          type: 'tree';
-          rowCount: number;
-          depthBuf: ArrayBuffer;
-          kindBuf: ArrayBuffer;
-          keyIdxBuf: ArrayBuffer;
-          valIdxBuf: ArrayBuffer;
-          metaBuf: ArrayBuffer;
-          subtreeRowsBuf: ArrayBuffer;
-          keys: string[];
-          vals: string[];
-        }
-      | { id: number; type: 'min'; min: string; tokMBuf: ArrayBuffer }
-    >,
-  ) => {
+  const localEpoch = workerEpoch;
+  const nextWorker = new PJWorker();
+  worker = nextWorker;
+  nextWorker.onmessage = (e: MessageEvent<WorkerReply>) => {
     const m = e.data;
-    if (m.id !== reqId) return; // stale reply
+    if (worker !== nextWorker || localEpoch !== workerEpoch) return;
+    if (m.id !== reqId || m.epoch !== workerEpoch) return; // stale reply
     if ('type' in m && m.type === 'tree') {
       ft = {
         depth: new Uint16Array(m.depthBuf),
@@ -483,30 +567,35 @@ function ensureWorker(): Worker {
       }
       return;
     }
-    if (!m.ok) {
+    if ('ok' in m && !m.ok) {
+      workerView = idleViewState(reqId, workerEpoch);
       showError(m.message ?? 'Invalid JSON', m.offset ?? -1);
       return;
     }
-    vm = {
-      pretty: m.pretty,
-      min: null,
-      source: undefined, // big path: value lives in the worker
-      indent: m.indent,
-      lineStarts: new Uint32Array(m.lineStartsBuf, 0, m.lsLen),
-      lines: m.lines,
-      maxLen: m.maxLen,
-      paintTokens: null,
-      paintTokenBuffer: null,
-      paintTokenStart: -1,
-      paintTokenEnd: -1,
-      tokM: null,
-      bytesIn,
-      docs: m.docs ?? 0,
-    };
-    ft = null;
-    enterView(m.ms ?? 0);
+    if ('phase' in m && m.phase === 1) {
+      const next = acceptPhase1(workerView, m as Phase1Reply, {
+        ...scanProvisional(m.pretty, provisionalRows()),
+      });
+      if (next === workerView || next.phase !== 'provisional') return;
+      workerView = next;
+      mountProvisional(next);
+      return;
+    }
+    if ('phase' in m && m.phase === 2) {
+      const next = acceptPhase2(workerView, m as Phase2Reply);
+      if (next === workerView || next.phase !== 'hydrated') return;
+      workerView = next;
+      hydrate(next);
+    }
   };
-  return worker;
+  nextWorker.onerror = () => {
+    if (worker !== nextWorker || localEpoch !== workerEpoch) return;
+    worker = null;
+    workerEpoch++;
+    workerView = restartViewState(reqId, workerEpoch);
+    if (mode === 'working') showError('Formatting worker stopped', -1);
+  };
+  return nextWorker;
 }
 
 // ---------- load pipeline ----------
@@ -527,6 +616,7 @@ function load(raw: string): void {
   }
 
   if (raw.length > WORKER_THRESHOLD) {
+    workerView = beginViewRequest(reqId, workerEpoch);
     parsedValue = undefined;
     vm = null;
     ft = null;
@@ -543,16 +633,18 @@ function load(raw: string): void {
       '<span class="working-chip">formatting…</span>' +
       esc(raw.slice(0, PREVIEW_CHARS).replace(/(.{200})/g, '$1\n')) +
       '\n…';
-    ensureWorker().postMessage({ type: 'parse', id: reqId, raw, indent });
+    ensureWorker().postMessage({ type: 'parse', id: reqId, epoch: workerEpoch, raw, indent });
     return;
   }
 
   const t0 = performance.now();
   const r = parseInput(raw);
   if (r.kind === 'error') {
+    workerView = idleViewState(reqId, workerEpoch);
     showError(r.message, r.offset, r.line, r.col, r.lineText);
     return;
   }
+  workerView = idleViewState(reqId, workerEpoch);
   parsedValue = r.value;
   vm = buildView(parsedValue, indent, bytesIn);
   vm.docs = r.kind === 'jsonl' ? r.docs : 0;
@@ -625,7 +717,7 @@ function mountScroller(v: ViewName, anchorTopVisual: number): void {
     const minStr = vm!.min;
     if (minStr === null) {
       // big path: lazy via worker, paint chip meanwhile
-      ensureWorker().postMessage({ type: 'getMin', id: reqId });
+      ensureWorker().postMessage({ type: 'getMin', id: reqId, epoch: workerEpoch });
       statusbar.textContent = 'preparing minified…';
       scroller.setWidth(0);
       scroller.setRowCount(0);
@@ -659,7 +751,7 @@ function mountScroller(v: ViewName, anchorTopVisual: number): void {
         visibleRows = buildVisible(ft, expanded);
       } else {
         // big doc: columns live in the worker — request transfer
-        ensureWorker().postMessage({ type: 'getTree', id: reqId });
+        ensureWorker().postMessage({ type: 'getTree', id: reqId, epoch: workerEpoch });
         statusbar.textContent = 'building tree…';
       }
     }
@@ -782,7 +874,7 @@ toolbar.addEventListener('click', (e) => {
     if (vm.min !== null) return copyText(vm.min);
     if (vm.source !== undefined) return copyText(ensureMin(vm)); // small path: local
     wantCopyMin = true;
-    ensureWorker().postMessage({ type: 'getMin', id: reqId });
+    ensureWorker().postMessage({ type: 'getMin', id: reqId, epoch: workerEpoch });
     toast('preparing…');
     return;
   }
@@ -852,25 +944,30 @@ $<HTMLSelectElement>('sel-indent').addEventListener('change', (e) => {
   indent = v === 'tab' ? '\t' : Number(v);
   if (!vm) return;
   reqId++;
+  workerView = parsedValue === undefined
+    ? beginViewRequest(reqId, workerEpoch)
+    : idleViewState(reqId, workerEpoch);
   closeSearch(); // pretty rebuilt — offsets shifted
+  diffRes = null; // pretty changed — any diff is stale
+  alignedRes = null;
+  lastBVal = null;
+  if (panelOpen) dpStatus.textContent = 'stale — press Diff';
+  if (curView === 'diff') {
+    curView = 'text';
+    syncSeg('text');
+  }
   if (parsedValue !== undefined) {
     const t0 = performance.now();
     vm = buildView(parsedValue, indent, bytesIn);
     ft = null;
-    diffRes = null; // pretty changed — any diff is stale
-    alignedRes = null;
-    lastBVal = null;
-    if (panelOpen) dpStatus.textContent = 'stale — press Diff';
-    if (curView === 'diff') {
-      curView = 'text';
-      syncSeg('text');
-    }
     mountScroller(curView, 0);
     const ms = performance.now() - t0;
     fmtStatus(ms);
     if (curView === 'tree') fmtTreeStatus();
   } else {
-    ensureWorker().postMessage({ type: 'reformat', id: reqId, indent });
+    setMode('working');
+    toolbar.hidden = true;
+    ensureWorker().postMessage({ type: 'reformat', id: reqId, epoch: workerEpoch, indent });
   }
 });
 
@@ -893,6 +990,7 @@ async function copyText(s: string): Promise<void> {
 
 function resetToLanding(): void {
   reqId++;
+  workerView = idleViewState(reqId, workerEpoch);
   vm = null;
   ft = null;
   parsedValue = undefined;

@@ -17,7 +17,6 @@
 
 import { esc, rangeHtml } from './highlight';
 import { textHtml, valCls } from './render';
-import { tokenizeWindow } from './tokenizer';
 import type { FlatTree } from './tree';
 import type { ViewModel } from './viewmodel';
 
@@ -305,19 +304,7 @@ export function rowHtml(
   // Keep the zero-hit Find path on the fused plain painter. This preserves
   // byte equality and avoids rebuilding a local syntax table for no marks.
   if (nm === 0) return textHtml(vm, first, count);
-  const windowStart = LS[first];
-  const windowEnd = last < L ? LS[last] - 1 : P.length;
-  let TOK = vm.paintTokens;
-  if (TOK === null || vm.paintTokenStart !== windowStart || vm.paintTokenEnd !== windowEnd) {
-    const reuse = vm.paintTokenBuffer ?? undefined;
-    TOK = tokenizeWindow(P, windowStart, windowEnd, reuse);
-    vm.paintTokens = TOK;
-    if (vm.paintTokenBuffer === null || TOK.buffer.byteLength > vm.paintTokenBuffer.buffer.byteLength) {
-      vm.paintTokenBuffer = new Int32Array(TOK.buffer);
-    }
-    vm.paintTokenStart = windowStart;
-    vm.paintTokenEnd = windowEnd;
-  }
+  const TOK = vm.tokP;
   let h = '';
   for (let i = first; i < last; i++) {
     const s = LS[i];

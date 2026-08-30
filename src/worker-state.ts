@@ -30,6 +30,7 @@ export interface ProvisionalViewState {
   indent: Indent;
   bytesIn: number;
   docs: number;
+  ms: number;
   prefixLineStarts: Uint32Array;
   rows: number;
   lastRowEnd: number;
@@ -42,6 +43,7 @@ export interface HydratedViewState {
   indent: Indent;
   bytesIn: number;
   docs: number;
+  ms: number;
   lineStarts: Uint32Array;
   lines: number;
   maxLen: number;
@@ -73,6 +75,29 @@ function validPhase2(reply: Phase2Reply): boolean {
   return true;
 }
 
+// Scan only the prefix needed to paint the first viewport. The final row end
+// is bounded separately because phase 1 does not provide a complete line
+// index. This keeps the provisional state honest and avoids a second full
+// source scan on the first paint.
+export function scanProvisional(pretty: string, maxRows: number): ProvisionalSeed {
+  const target = Math.max(1, Math.floor(maxRows));
+  const starts = [0];
+  let cursor = 0;
+  while (starts.length < target) {
+    const nl = pretty.indexOf('\n', cursor);
+    if (nl < 0) break;
+    cursor = nl + 1;
+    starts.push(cursor);
+  }
+  const lastStart = starts[starts.length - 1];
+  const nextNl = pretty.indexOf('\n', lastStart);
+  return {
+    prefixLineStarts: Uint32Array.from(starts),
+    rows: starts.length,
+    lastRowEnd: nextNl < 0 ? pretty.length : nextNl,
+  };
+}
+
 export function idleViewState(id: number, epoch: number): IdleViewState {
   return { phase: 'idle', request: { id, epoch } };
 }
@@ -95,6 +120,7 @@ export function acceptPhase1(
     indent: reply.indent,
     bytesIn: reply.bytesIn,
     docs: reply.docs,
+    ms: reply.ms,
     prefixLineStarts: seed.prefixLineStarts,
     rows: seed.rows,
     lastRowEnd: seed.lastRowEnd,
@@ -121,6 +147,7 @@ export function acceptPhase2(
     indent: state.indent,
     bytesIn: state.bytesIn,
     docs: state.docs,
+    ms: state.ms,
     lineStarts: new Uint32Array(reply.lineStartsBuf, 0, reply.lsLen),
     lines: reply.lines,
     maxLen: reply.maxLen,

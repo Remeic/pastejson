@@ -8,8 +8,7 @@ import { flatten, buildVisible } from '../src/tree';
 import { rangeHtml } from '../src/highlight';
 import { diffJson, diffAligned, OP_ADD, OP_DEL, OP_SAME, OP_MOD, MYERS_TRACE_BUDGET, type DiffResult } from '../src/diffcore';
 import { diffHtml, sbsHtml } from '../src/diffview';
-import { treeHtml } from '../src/render';
-import { textHtml } from '../src/render';
+import { treeHtml, provisionalTextHtml, textHtml } from '../src/render';
 import {
   findAll,
   lineOf,
@@ -32,7 +31,9 @@ import {
   beginViewRequest,
   resetViewState,
   restartViewState,
+  scanProvisional,
   type ProvisionalSeed,
+  type WorkerViewState,
 } from '../src/worker-state';
 
 let passed = 0;
@@ -98,7 +99,7 @@ ok('two-phase state: phase 1 becomes hydrated only after matching phase 2', () =
     docs: 0,
     ms: 2,
   });
-  let state = beginViewRequest(10, 1);
+  let state: WorkerViewState = beginViewRequest(10, 1);
   state = acceptPhase1(state, p1, {
     prefixLineStarts: new Uint32Array([0, 2]),
     rows: 2,
@@ -132,7 +133,7 @@ ok('two-phase state: phase 1 becomes hydrated only after matching phase 2', () =
 });
 
 ok('two-phase state: phase 2 without matching phase 1 is ignored', () => {
-  const state = beginViewRequest(11, 1);
+  const state: WorkerViewState = beginViewRequest(11, 1);
   const buffers = phase2Buffers();
   const reply = makePhase2Reply({
     id: 11,
@@ -159,7 +160,7 @@ ok('two-phase state: stale phase 1 and phase 2 cannot replace a newer request', 
     docs: 0,
     ms: 1,
   });
-  let state = beginViewRequest(20, 1);
+  let state: WorkerViewState = beginViewRequest(20, 1);
   state = beginViewRequest(21, 1);
   assert.strictEqual(acceptPhase1(state, oldP1, phaseSeed), state);
 
@@ -208,6 +209,49 @@ ok('two-phase state: reset and worker restart reject old replies', () => {
   assert.strictEqual(acceptPhase1(reset, p1, phaseSeed), reset);
   const restarted = restartViewState(30, 2);
   assert.strictEqual(acceptPhase1(restarted, p1, phaseSeed), restarted);
+});
+
+ok('two-phase provisional scan and painter use only the visible prefix', () => {
+  const value = { rows: Array.from({ length: 12 }, (_, i) => ({ id: i, ok: i % 2 === 0 })) };
+  const full = buildView(value, 2, 100);
+  const p1 = makePhase1Reply({
+    id: 40,
+    epoch: 1,
+    pretty: full.pretty,
+    indent: 2,
+    bytesIn: 100,
+    docs: 0,
+    ms: 3,
+  });
+  const seed = scanProvisional(full.pretty, 6);
+  let state: WorkerViewState = acceptPhase1(beginViewRequest(40, 1), p1, seed);
+  assert.strictEqual(state.phase, 'provisional');
+  if (state.phase !== 'provisional') return;
+  assert.deepStrictEqual([...state.prefixLineStarts], [...full.lineStarts.slice(0, 6)]);
+  assert.strictEqual(
+    provisionalTextHtml(state, 0, state.rows),
+    textHtml(full, 0, state.rows),
+  );
+
+  const p2 = makePhase2Reply({
+    id: 40,
+    epoch: 1,
+    lines: full.lines,
+    maxLen: full.maxLen,
+    indent: 2,
+    bytesIn: 100,
+    docs: 0,
+    lsLen: full.lineStarts.length,
+    lineStartsBuf: full.lineStarts.buffer as ArrayBuffer,
+    tokPLen: full.tokP.length,
+    tokPBuf: full.tokP.buffer as ArrayBuffer,
+  });
+  state = acceptPhase2(state, p2);
+  assert.strictEqual(state.phase, 'hydrated');
+  if (state.phase !== 'hydrated') return;
+  assert.strictEqual(state.pretty, p1.pretty);
+  assert.deepStrictEqual([...state.lineStarts], [...full.lineStarts]);
+  assert.deepStrictEqual([...state.tokP], [...full.tokP]);
 });
 
 // ---------- tokenizer ----------
@@ -312,6 +356,7 @@ ok('emitJson matches stringify for escaped values and tokens', () => {
     if (toks[i + 1] !== T_PUNCT) ref.push(toks[i], toks[i + 1]);
   }
   assert.deepStrictEqual([...tokenizeWindow(r.pretty, 0, r.pretty.length)], ref);
+  assert.deepStrictEqual([...r.tokens], ref);
 });
 
 ok('emitJson handles one-line roots', () => {
@@ -332,6 +377,12 @@ ok('emitJson numeric fast paths keep exact token ends', () => {
   for (const value of values) {
     const root = emitJson(value, 2, 16);
     assert.deepStrictEqual([...tokenizeWindow(root.pretty, 0, root.pretty.length)], [root.pretty.length, T_NUM]);
+  }
+
+  for (const value of [NaN, Infinity, -Infinity]) {
+    const root = emitJson(value, 2, 16);
+    assert.strictEqual(root.pretty, 'null');
+    assert.deepStrictEqual([...root.tokens], [4, T_NULL]);
   }
 
   const nested = emitJson(values, 2, 256);

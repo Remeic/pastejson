@@ -65,6 +65,15 @@ export class VScroll {
     this.applyWidth();
   }
 
+  // Swap the row painter without replacing the host. Hydration uses this to
+  // keep the already visible provisional rows in place until the next frame.
+  setPainter(paint: (first: number, count: number) => string): void {
+    this.opts.paint = paint;
+    this.pFirst = -1;
+    this.pCount = -1;
+    this.schedule();
+  }
+
   private applyWidth(): void {
     const w = this.widthPx > 0 ? Math.min(this.widthPx, 20000) : 0;
     const ws = w ? w + 'px' : '100%';
