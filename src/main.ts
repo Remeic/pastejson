@@ -418,10 +418,8 @@ function ensureWorker(): Worker {
           maxLen: number;
           indent: number | '\t';
           docs: number;
-          tokPLen: number;
           lsLen: number;
           lineStartsBuf: ArrayBuffer;
-          tokPBuf: ArrayBuffer;
           ms?: number;
           message?: string;
           offset?: number;
@@ -497,7 +495,10 @@ function ensureWorker(): Worker {
       lineStarts: new Uint32Array(m.lineStartsBuf, 0, m.lsLen),
       lines: m.lines,
       maxLen: m.maxLen,
-      tokP: new Int32Array(m.tokPBuf, 0, m.tokPLen),
+      paintTokens: null,
+      paintTokenBuffer: null,
+      paintTokenStart: -1,
+      paintTokenEnd: -1,
       tokM: null,
       bytesIn,
       docs: m.docs ?? 0,

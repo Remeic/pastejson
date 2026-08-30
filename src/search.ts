@@ -16,7 +16,8 @@
 // zero-hit outputs are byte-equal to the plain painters (tests enforce).
 
 import { esc, rangeHtml } from './highlight';
-import { valCls } from './render';
+import { textHtml, valCls } from './render';
+import { tokenizeWindow } from './tokenizer';
 import type { FlatTree } from './tree';
 import type { ViewModel } from './viewmodel';
 
@@ -295,12 +296,28 @@ export function rowHtml(
 ): string {
   const P = vm.pretty;
   const LS = vm.lineStarts;
-  const TOK = vm.tokP;
   const L = vm.lines;
   const S = st.starts;
   const E = st.ends;
   const nm = S.length;
   const last = Math.min(first + count, L);
+  if (first >= last) return '';
+  // Keep the zero-hit Find path on the fused plain painter. This preserves
+  // byte equality and avoids rebuilding a local syntax table for no marks.
+  if (nm === 0) return textHtml(vm, first, count);
+  const windowStart = LS[first];
+  const windowEnd = last < L ? LS[last] - 1 : P.length;
+  let TOK = vm.paintTokens;
+  if (TOK === null || vm.paintTokenStart !== windowStart || vm.paintTokenEnd !== windowEnd) {
+    const reuse = vm.paintTokenBuffer ?? undefined;
+    TOK = tokenizeWindow(P, windowStart, windowEnd, reuse);
+    vm.paintTokens = TOK;
+    if (vm.paintTokenBuffer === null || TOK.buffer.byteLength > vm.paintTokenBuffer.buffer.byteLength) {
+      vm.paintTokenBuffer = new Int32Array(TOK.buffer);
+    }
+    vm.paintTokenStart = windowStart;
+    vm.paintTokenEnd = windowEnd;
+  }
   let h = '';
   for (let i = first; i < last; i++) {
     const s = LS[i];

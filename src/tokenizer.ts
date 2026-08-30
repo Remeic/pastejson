@@ -181,3 +181,140 @@ export function tokenize(src: string): Int32Array {
   return len === out.length ? out : out.slice(0, len);
 }
 
+// Window tokenizer for the Text painter. End offsets stay absolute so the
+// same table can serve every row in one paint. The scan starts at a line
+// boundary in production, so no token can begin before `start`; when a token
+// begins before `end`, its scan is allowed to finish past `end`. This keeps
+// the end-only token table semantics exact without a fixed lookahead guess.
+// An optional buffer lets the Find painter reuse capacity across cache misses.
+export function tokenizeWindow(src: string, start: number, end: number, reuse?: Int32Array): Int32Array {
+  const n = src.length;
+  const limit = Math.min(n, Math.max(start, end));
+  // Window token counts are usually far below source length. Start with a
+  // small paint-sized buffer and grow only for unusually dense windows.
+  let cap = reuse?.length ?? 256;
+  if (cap < 256) cap = 256;
+  let len = 0;
+  let out = reuse && reuse.length >= cap ? reuse : new Int32Array(cap);
+
+  let i = start;
+  let done = false;
+  while (i < n && !done) {
+    const c = src.charCodeAt(i);
+    const cls = c < 128 ? CLS[c] : 0;
+    let tokEnd = -1;
+    let tokType = -1;
+
+    if (cls === C_WS) {
+      i++;
+      continue;
+    }
+
+    if (cls === C_QUOTE) {
+      let j = i + 1;
+      let closed = false;
+      for (;;) {
+        const q = src.indexOf('"', j);
+        if (q < 0) break;
+        let bsl = 0;
+        let k = q - 1;
+        while (k >= 0 && src.charCodeAt(k) === 92) {
+          bsl++;
+          k--;
+        }
+        j = q + 1;
+        if ((bsl & 1) === 0) {
+          closed = true;
+          break;
+        }
+      }
+      if (!closed) {
+        tokEnd = n;
+        tokType = T_ERR;
+        i = n;
+      } else {
+        let k = j;
+        while (k < n) {
+          const w = src.charCodeAt(k);
+          if (w === 32 || w === 9 || w === 10 || w === 13) k++;
+          else break;
+        }
+        tokEnd = j;
+        tokType = k < n && src.charCodeAt(k) === 58 ? T_KEY : T_STR;
+        i = j;
+      }
+    } else if (cls === C_NUMSTART) {
+      let j = i + 1;
+      while (j < n) {
+        const d = src.charCodeAt(j);
+        if (d < 128 && NUMCH[d] === 1) {
+          j++;
+          continue;
+        }
+        break;
+      }
+      tokEnd = j;
+      tokType = T_NUM;
+      i = j;
+    } else if (cls === C_LITERAL) {
+      if (
+        c === 116 &&
+        src.charCodeAt(i + 1) === 114 &&
+        src.charCodeAt(i + 2) === 117 &&
+        src.charCodeAt(i + 3) === 101
+      ) {
+        tokEnd = i + 4;
+        tokType = T_TRUE;
+        i += 4;
+      } else if (
+        c === 102 &&
+        src.charCodeAt(i + 1) === 97 &&
+        src.charCodeAt(i + 2) === 108 &&
+        src.charCodeAt(i + 3) === 115 &&
+        src.charCodeAt(i + 4) === 101
+      ) {
+        tokEnd = i + 5;
+        tokType = T_FALSE;
+        i += 5;
+      } else if (
+        c === 110 &&
+        src.charCodeAt(i + 1) === 117 &&
+        src.charCodeAt(i + 2) === 108 &&
+        src.charCodeAt(i + 3) === 108
+      ) {
+        tokEnd = i + 4;
+        tokType = T_NULL;
+        i += 4;
+      } else {
+        tokEnd = i + 1;
+        tokType = T_ERR;
+        i++;
+      }
+    } else if (cls === C_PUNCT) {
+      i++;
+      continue;
+    } else {
+      tokEnd = i + 1;
+      tokType = T_ERR;
+      i++;
+    }
+
+    if (tokType !== T_PUNCT) {
+      if (len + 2 > cap) {
+        cap <<= 1;
+        const grown = new Int32Array(cap);
+        grown.set(out);
+        out = grown;
+      }
+      out[len++] = tokEnd;
+      out[len++] = tokType;
+      // The next non-punctuation token owns the gap after the preceding
+      // token. Continue through whitespace/punctuation after the requested
+      // end and stop only after that owner is known. This is unbounded by
+      // design: nested closing-container runs can be arbitrarily deep.
+      if (i >= limit) done = true;
+    }
+  }
+
+  return len === out.length ? out : out.subarray(0, len);
+}

@@ -1,5 +1,5 @@
 // Token-type -> CSS class letter
-const CLS = ['s', 'n', 'b', 'b', 'x', 'k', 'p', 'e'];
+const TOKEN_CLASSES = ['s', 'n', 'b', 'b', 'x', 'k', 'p', 'e'];
 
 const AMP = '&amp;';
 const LT = '&lt;';
@@ -29,7 +29,7 @@ export function firstTokenAt(tokens: Int32Array, offset: number): number {
   return ans;
 }
 
-// HTML for source range [start,end) using full-document token table.
+// HTML for source range [start,end) using an ordered token table.
 export function rangeHtml(src: string, tokens: Int32Array, start: number, end: number): string {
   const cnt = tokens.length >> 1;
   let html = '';
@@ -49,7 +49,7 @@ export function rangeHtml(src: string, tokens: Int32Array, start: number, end: n
     const s = Math.max(tokStart, pos);
     const e = Math.min(tokEnd, end);
     if (e > s) {
-      html += '<i class=' + CLS[tokens[idx * 2 + 1]] + '>' + esc(src.slice(s, e)) + '</i>';
+      html += '<i class=' + TOKEN_CLASSES[tokens[idx * 2 + 1]] + '>' + esc(src.slice(s, e)) + '</i>';
     }
     if (e > pos) pos = e;
     if (pos >= end) break;

@@ -5,8 +5,8 @@ import { emitJson } from './serialize';
 // - main thread (small docs < WORKER_THRESHOLD)
 // - worker thread (big docs), which transfers typed arrays back
 //
-// Perf: ONE fused walk (serialize.ts) produces pretty text + tokens +
-// line index. min string, min tokens and TREE are LAZY.
+// Perf: ONE fused walk (serialize.ts) produces pretty text + line index.
+// Text tokens, min string/tokens, and TREE are lazy.
 
 export interface ViewModel {
   pretty: string;
@@ -17,7 +17,10 @@ export interface ViewModel {
   lineStarts: Uint32Array; // offsets where each pretty-printed line starts
   lines: number;
   maxLen: number; // longest pretty line length (for h-scroll width)
-  tokP: Int32Array; // tokens over pretty
+  paintTokens: Int32Array | null; // one most-recent Find window
+  paintTokenBuffer: Int32Array | null; // reusable capacity for Find misses
+  paintTokenStart: number;
+  paintTokenEnd: number;
   tokM: Int32Array | null; // lazy
   bytesIn: number;
   docs: number; // >0 = JSONL document count
@@ -33,7 +36,10 @@ export function buildView(value: unknown, indent: number | '\t', bytesIn: number
     lineStarts: r.lineStarts,
     lines: r.lines,
     maxLen: r.maxLen,
-    tokP: r.tokens,
+    paintTokens: null,
+    paintTokenBuffer: null,
+    paintTokenStart: -1,
+    paintTokenEnd: -1,
     tokM: null,
     bytesIn,
     docs: 0,
