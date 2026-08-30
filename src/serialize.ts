@@ -88,8 +88,6 @@ export function emitJson(
   let lineStart = 0;
   let maxLen = 0;
 
-  const isBranch = (v: unknown): boolean => v !== null && typeof v === 'object';
-
   // frame pool — pooled objects, zero alloc per push after warmup
   const framePool: Frame[] = [];
   let frameTop = 0;
@@ -97,7 +95,7 @@ export function emitJson(
   let cf: Frame | undefined; // current frame register
 
   // ---- root ----
-  if (!isBranch(value)) {
+  if (value === null || typeof value !== 'object') {
     // inline emitLeafVal
     {
       const t = typeof value;
@@ -105,11 +103,19 @@ export function emitJson(
       if (t === 'number') {
         const num = value as number;
         if (Number.isInteger(num) && num < 1e9 && num > -1e9) {
-          let a = num < 0 ? -num : num;
-          let d = 1;
-          while (a >= 10) {
-            a = (a / 10) | 0;
-            d++;
+          // Balanced comparisons avoid the JSC integer-division loop.
+          const a = num < 0 ? -num : num;
+          let d: number;
+          if (a < 10) {
+            d = 1;
+          } else if (a < 100) {
+            d = 2;
+          } else if (a < 10000) {
+            d = a < 1000 ? 3 : 4;
+          } else if (a < 1000000) {
+            d = a < 100000 ? 5 : 6;
+          } else {
+            d = a < 10000000 ? 7 : a < 100000000 ? 8 : 9;
           }
           pos += d + (num < 0 ? 1 : 0);
         } else {
@@ -231,7 +237,7 @@ export function emitJson(
     }
     f.idx++;
 
-    if (isBranch(child)) {
+    if (child !== null && typeof child === 'object') {
       // inline openContainer(child, f.childDepth)
       const isArr = Array.isArray(child);
       pos += 1;
@@ -272,21 +278,37 @@ export function emitJson(
       if (t === 'number') {
         const num = child as number;
         if (Number.isInteger(num) && num < 1e9 && num > -1e9) {
-          let a = num < 0 ? -num : num;
-          let d = 1;
-          while (a >= 10) {
-            a = (a / 10) | 0;
-            d++;
+          // Balanced comparisons avoid the JSC integer-division loop.
+          const a = num < 0 ? -num : num;
+          let d: number;
+          if (a < 10) {
+            d = 1;
+          } else if (a < 100) {
+            d = 2;
+          } else if (a < 10000) {
+            d = a < 1000 ? 3 : 4;
+          } else if (a < 1000000) {
+            d = a < 100000 ? 5 : 6;
+          } else {
+            d = a < 10000000 ? 7 : a < 100000000 ? 8 : 9;
           }
           pos += d + (num < 0 ? 1 : 0);
         } else {
-          let jN = pos;
-          while (jN < plen) {
-            const cN = pretty.charCodeAt(jN);
-            if (cN === 44 || cN === 10 || cN === 125 || cN === 93) break;
-            jN++;
+          if (f.isArr) {
+            // Native newline search wins for arrays; mixed object values regress.
+            const lineEnd = pretty.indexOf('\n', pos);
+            pos = lineEnd < 0
+              ? plen
+              : lineEnd - (pretty.charCodeAt(lineEnd - 1) === 44 ? 1 : 0);
+          } else {
+            let jN = pos;
+            while (jN < plen) {
+              const cN = pretty.charCodeAt(jN);
+              if (cN === 44 || cN === 10 || cN === 125 || cN === 93) break;
+              jN++;
+            }
+            pos = jN;
           }
-          pos = jN;
         }
         type = T_NUM;
       } else if (t === 'string') {

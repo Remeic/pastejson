@@ -118,6 +118,28 @@ ok('emitJson handles one-line roots', () => {
   assert.deepStrictEqual([...scalar.tokens], [1, T_NUM]);
 });
 
+ok('emitJson numeric fast paths keep exact token ends', () => {
+  const values = [
+    0, 9, 10, 99, 100, 999, 1000, 9999, 10000, 99999, 100000,
+    999999, 1000000, 9999999, 10000000, 99999999, 100000000,
+    999999999, -9, -10, -999999999, 0.1, -123.456, 1e21, 1e-7,
+    123456789012345680000, 3.5e300, -2.2250738585072014e-308,
+  ];
+
+  for (const value of values) {
+    const root = emitJson(value, 2, 16);
+    assert.deepStrictEqual([...root.tokens], [root.pretty.length, T_NUM]);
+  }
+
+  const nested = emitJson(values, 2, 256);
+  const expected = tokenize(nested.pretty);
+  const numberTokens: number[] = [];
+  for (let i = 0; i < expected.length; i += 2) {
+    if (expected[i + 1] === T_NUM) numberTokens.push(expected[i], expected[i + 1]);
+  }
+  assert.deepStrictEqual([...nested.tokens], numberTokens);
+});
+
 // ---------- tree flatten ----------
 ok('flatten counts + subtreeRows', () => {
   const ft = flatten({ a: 1, b: [2, 3], c: { d: null } });
