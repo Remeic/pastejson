@@ -1,12 +1,14 @@
 // Perf smoke: synthetic ~5MB payload through the FULL pipeline.
 // Run: bun scripts/bench.ts
-// Gate = PASTE PATH (parse → buildView → window paint): the product promise.
+// Gate = PASTE PATH (parse → stringify → phase 2 walk → window paint): the
+// product promise. Phase 1 is measured separately because it paints first.
 // Tree is lazy (flatten on demand, same philosophy as lazy min) and is
 // REPORTED separately, not gated.
-import { buildView, buildMinTokens } from '../src/viewmodel';
+import { buildViewFromPretty, buildMinTokens } from '../src/viewmodel';
 import { flatten, buildVisible } from '../src/tree';
-import { textHtml } from '../src/render';
+import { provisionalTextHtml, textHtml } from '../src/render';
 import { findAll } from '../src/search';
+import { scanProvisional, type ProvisionalViewState } from '../src/worker-state';
 import { performance } from 'node:perf_hooks';
 
 function gen(rows: number): Record<string, unknown> {
@@ -36,10 +38,18 @@ for (let it = 0; it < 18; it++) {
 }
 const payload = gen(lo);
 const raw = JSON.stringify(payload);
+if (raw.length <= 20_000) throw new Error(`stress fixture too small: ${raw.length} source characters`);
 console.log(`payload minified: ${(raw.length / 1048576).toFixed(2)} MB, items: ${lo}`);
 
 // warm + measured runs (min of 7 — min = machine capability, noise-proof)
-const runs: { parse: number; stringify: number; buildView: number; paint: number; total: number }[] = [];
+const runs: {
+  parse: number;
+  stringify: number;
+  phase1ScanPaint: number;
+  phase2: number;
+  paint: number;
+  total: number;
+}[] = [];
 for (let run = 0; run < 7; run++) {
   let t0 = performance.now();
   const value: unknown = JSON.parse(raw);
@@ -50,15 +60,39 @@ for (let run = 0; run < 7; run++) {
   const tStringify = performance.now() - t0;
 
   t0 = performance.now();
-  const vm = buildView(value, 2, raw.length);
-  const tView = performance.now() - t0;
+  const seed = scanProvisional(pretty, 80);
+  const provisional: ProvisionalViewState = {
+    phase: 'provisional',
+    request: { id: run, epoch: 1 },
+    pretty,
+    indent: 2,
+    bytesIn: raw.length,
+    docs: 0,
+    ms: 0,
+    preserveScrollTop: 0,
+    prefixLineStarts: seed.prefixLineStarts,
+    rows: seed.rows,
+    lastRowEnd: seed.lastRowEnd,
+  };
+  provisionalTextHtml(provisional, 0, 80);
+  const tPhase1ScanPaint = performance.now() - t0;
+
+  t0 = performance.now();
+  const vm = buildViewFromPretty(value, pretty, 2, raw.length);
+  const tPhase2 = performance.now() - t0;
 
   t0 = performance.now();
   textHtml(vm, 0, 80);
   const tPaint = performance.now() - t0;
 
-  runs.push({ parse: tParse, stringify: tStringify, buildView: tView, paint: tPaint, total: tParse + tView + tPaint });
-  void pretty;
+  runs.push({
+    parse: tParse,
+    stringify: tStringify,
+    phase1ScanPaint: tPhase1ScanPaint,
+    phase2: tPhase2,
+    paint: tPaint,
+    total: tParse + tStringify + tPhase2 + tPaint,
+  });
 
   if (run === 0) {
     console.log(
@@ -88,15 +122,19 @@ const min = (xs: number[]): number => Math.min(...xs);
 const p = {
   parse: min(runs.map((r) => r.parse)),
   stringify: min(runs.map((r) => r.stringify)),
-  buildView: min(runs.map((r) => r.buildView)),
+  phase1ScanPaint: min(runs.map((r) => r.phase1ScanPaint)),
+  phase2: min(runs.map((r) => r.phase2)),
   paint: min(runs.map((r) => r.paint)),
 };
-const total = min(runs.map((r) => r.total));
+const firstPaint = min(runs.map((r) => r.parse + r.stringify + r.phase1ScanPaint));
+const fullReady = min(runs.map((r) => r.total));
 console.log(`parse            ${p.parse.toFixed(1)} ms`);
 console.log(`stringify(native) ${p.stringify.toFixed(1)} ms`);
-console.log(`buildView(fused) ${p.buildView.toFixed(1)} ms  ← native stringify + closure-free walk (no tree)`);
+console.log(`phase 1 scan+paint ${p.phase1ScanPaint.toFixed(1)} ms  ← prefix only`);
+console.log(`phase 2 walk      ${p.phase2.toFixed(1)} ms  ← exact phase-1 string, no re-stringify`);
 console.log(`window paint 80 rows ${p.paint.toFixed(1)} ms`);
-console.log(`paste pipeline   ${total.toFixed(1)} ms (min of 7)`);
+console.log(`paste → first correct paint ${firstPaint.toFixed(1)} ms (min of 7)`);
+console.log(`paste → full ready          ${fullReady.toFixed(1)} ms (min of 7)`);
 
 // Drift-immune gate: absolute ms flake on warm/shared machines (observed
 // 21→26.5ms across a session with ZERO bench-path changes). Gate on the
