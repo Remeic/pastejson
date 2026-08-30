@@ -27,6 +27,9 @@ export class VScroll {
   private pFirst = -1;
   private pCount = -1;
   private pRows = -1;
+  private destroyed = false;
+  private firstPaintDone = false;
+  private pendingPainter: ((first: number, count: number) => string) | null = null;
 
   constructor(host: HTMLElement, opts: VScrollOpts) {
     this.host = host;
@@ -65,9 +68,13 @@ export class VScroll {
     this.applyWidth();
   }
 
-  // Swap the row painter without replacing the host. Hydration uses this to
-  // keep the already visible provisional rows in place until the next frame.
+  // Hydration may arrive before the first provisional rAF. Keep that first
+  // frame on the provisional painter so it can reach a browser paint.
   setPainter(paint: (first: number, count: number) => string): void {
+    if (!this.firstPaintDone && this.rowCount > 0) {
+      this.pendingPainter = paint;
+      return;
+    }
     this.opts.paint = paint;
     this.pFirst = -1;
     this.pCount = -1;
@@ -116,6 +123,7 @@ export class VScroll {
   }
 
   private paintNow(): void {
+    if (this.destroyed) return;
     this.ticking = false;
     const rowH = this.opts.rowH;
     const overscan = this.opts.overscan ?? 6;
@@ -131,11 +139,24 @@ export class VScroll {
     const html = this.rowCount === 0 ? '' : this.opts.paint(realFirst, n);
     this.win.innerHTML = html;
     this.win.style.transform = 'translateY(' + realFirst * rowH + 'px)';
+    if (!this.firstPaintDone) {
+      this.firstPaintDone = true;
+      const pending = this.pendingPainter;
+      this.pendingPainter = null;
+      if (pending) {
+        this.opts.paint = pending;
+        this.pFirst = -1;
+        this.pCount = -1;
+        this.schedule();
+      }
+    }
   }
 
   private readonly doPaint = (): void => this.paintNow();
 
   destroy(): void {
+    this.destroyed = true;
+    this.pendingPainter = null;
     this.host.removeEventListener('scroll', this.onScroll);
     this.ro?.disconnect();
   }

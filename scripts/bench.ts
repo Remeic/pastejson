@@ -1,7 +1,9 @@
 // Perf smoke: synthetic ~5MB payload through the FULL pipeline.
 // Run: bun scripts/bench.ts
-// Gate = PASTE PATH (parse → stringify → phase 2 walk → window paint): the
-// product promise. Phase 1 is measured separately because it paints first.
+// Gate = PASTE COMPUTE PATH (parse → stringify → phase 2 walk → window HTML).
+// This CLI omits structured-clone/postMessage, worker task hops, main-thread
+// delivery, rAF scheduling, and hydration. Its phase timings are compute-ready
+// estimates; browser first paint and full-ready require browser marks.
 // Tree is lazy (flatten on demand, same philosophy as lazy min) and is
 // REPORTED separately, not gated.
 import { buildViewFromPretty, buildMinTokens } from '../src/viewmodel';
@@ -45,7 +47,7 @@ console.log(`payload minified: ${(raw.length / 1048576).toFixed(2)} MB, items: $
 const runs: {
   parse: number;
   stringify: number;
-  phase1ScanPaint: number;
+  phase1Compute: number;
   phase2: number;
   paint: number;
   total: number;
@@ -68,13 +70,15 @@ for (let run = 0; run < 7; run++) {
     indent: 2,
     bytesIn: raw.length,
     docs: 0,
+    showProvisional: true,
+    mountable: seed.mountable,
     preserveScrollTop: 0,
     prefixLineStarts: seed.prefixLineStarts,
     rows: seed.rows,
     lastRowEnd: seed.lastRowEnd,
   };
   provisionalTextHtml(provisional, 0, 80);
-  const tPhase1ScanPaint = performance.now() - t0;
+  const tPhase1Compute = performance.now() - t0;
 
   t0 = performance.now();
   const vm = buildViewFromPretty(value, pretty, 2, raw.length);
@@ -87,7 +91,7 @@ for (let run = 0; run < 7; run++) {
   runs.push({
     parse: tParse,
     stringify: tStringify,
-    phase1ScanPaint: tPhase1ScanPaint,
+    phase1Compute: tPhase1Compute,
     phase2: tPhase2,
     paint: tPaint,
     total: tParse + tStringify + tPhase2 + tPaint,
@@ -121,19 +125,20 @@ const min = (xs: number[]): number => Math.min(...xs);
 const p = {
   parse: min(runs.map((r) => r.parse)),
   stringify: min(runs.map((r) => r.stringify)),
-  phase1ScanPaint: min(runs.map((r) => r.phase1ScanPaint)),
+  phase1Compute: min(runs.map((r) => r.phase1Compute)),
   phase2: min(runs.map((r) => r.phase2)),
   paint: min(runs.map((r) => r.paint)),
 };
-const firstPaint = min(runs.map((r) => r.parse + r.stringify + r.phase1ScanPaint));
-const fullReady = min(runs.map((r) => r.total));
+const firstComputeReady = min(runs.map((r) => r.parse + r.stringify + r.phase1Compute));
+const fullComputeReady = min(runs.map((r) => r.total));
 console.log(`parse            ${p.parse.toFixed(1)} ms`);
 console.log(`stringify(native) ${p.stringify.toFixed(1)} ms`);
-console.log(`phase 1 scan+paint ${p.phase1ScanPaint.toFixed(1)} ms  ← prefix only`);
+console.log(`phase 1 scan+HTML compute ${p.phase1Compute.toFixed(1)} ms  ← prefix only`);
 console.log(`phase 2 walk      ${p.phase2.toFixed(1)} ms  ← exact phase-1 string, no re-stringify`);
-console.log(`window paint 80 rows ${p.paint.toFixed(1)} ms`);
-console.log(`paste → first correct paint ${firstPaint.toFixed(1)} ms (min of 7)`);
-console.log(`paste → full ready          ${fullReady.toFixed(1)} ms (min of 7)`);
+console.log(`window HTML compute 80 rows ${p.paint.toFixed(1)} ms`);
+console.log(`paste → first correct compute-ready ${firstComputeReady.toFixed(1)} ms (min of 7)`);
+console.log(`paste → full compute-ready          ${fullComputeReady.toFixed(1)} ms (min of 7)`);
+console.log('browser first paint/full-ready: not measured by this CLI');
 
 // Drift-immune gate: absolute ms flake on warm/shared machines (observed
 // 21→26.5ms across a session with ZERO bench-path changes). Gate on the

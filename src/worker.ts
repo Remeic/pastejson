@@ -141,10 +141,16 @@ function formatDoc(
   // Yield so the main thread can paint phase 1 before the value walk starts.
   setTimeout(() => {
     if (cachedDoc !== doc) return;
-    const vm = buildViewFromPretty(doc.value, doc.pretty, doc.indent, doc.bytesIn, doc.docs);
-    if (cachedDoc !== doc) return;
-    doc.vm = vm;
-    replyPhase2(doc, vm, performance.now() - startedAt);
+    try {
+      const vm = buildViewFromPretty(doc.value, doc.pretty, doc.indent, doc.bytesIn, doc.docs);
+      if (cachedDoc !== doc) return;
+      doc.vm = vm;
+      replyPhase2(doc, vm, performance.now() - startedAt);
+    } catch (err) {
+      if (cachedDoc !== doc) return;
+      cachedDoc = null;
+      replyErr(doc.id, err instanceof Error ? err.message : String(err), -1);
+    }
   }, 0);
 }
 

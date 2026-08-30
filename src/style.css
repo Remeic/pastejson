@@ -55,7 +55,8 @@ body[data-mode=loaded] #in { display: none; }
    the same body geometry as the hydrated view. */
 body[data-view-state=pending] #in,
 body[data-view-state=provisional] #in { display: none; }
-body[data-view-state=provisional] #view .vscroll {
+body[data-view-state=pending] #view,
+body[data-view-state=provisional] #view {
   overflow: hidden;
   pointer-events: none;
 }

@@ -1,8 +1,11 @@
-// Focused A/B measurement for Stage A.
+// Deterministic token-cost comparison retained from Stage A.
+// A+B production Text/Find use the full global tokP table after phase 2;
+// window-token measurements below are historical comparison only. The HTML
+// timings are string-compute timings, not browser paint timings.
 // Run: bun scripts/bench-viewport.ts
-// The global side models the pre-Stage-A full pretty-token table. The local
-// side uses the production window painter. Both render the same three 80-row
-// windows from one deterministic document and assert byte equality.
+// The reference side uses a full non-punctuation table, as does production
+// textHtml. Both render the same three 80-row windows from one deterministic
+// document and assert byte equality.
 import { performance } from 'node:perf_hooks';
 import { buildView } from '../src/viewmodel';
 import { textHtml } from '../src/render';
@@ -144,13 +147,13 @@ for (const searchCase of searchCases) {
 
 console.log(`pretty ${(vm.pretty.length / 1048576).toFixed(2)} MB, ${vm.lines} lines`);
 console.log(`full token table ${globalTokens.length >> 1} pairs / ${globalTokens.byteLength} bytes`);
-console.log(`local 3-window tables ${windows.map((first) => {
+console.log(`legacy window 3-window tables ${windows.map((first) => {
   const last = Math.min(first + 80, vm.lines);
   return tokenizeWindow(vm.pretty, vm.lineStarts[first], last < vm.lines ? vm.lineStarts[last] - 1 : vm.pretty.length).length >> 1;
 }).join(',')} pairs`);
 console.log(`full token construction ${fullTokenBuild.toFixed(2)} ms (median of ${SAMPLE_COUNT})`);
-console.log(`local token construction ${localTokenBuild.toFixed(2)} ms (median of ${SAMPLE_COUNT})`);
-console.log(`local cold first 80-row paint ${coldPaint.toFixed(2)} ms (median of ${SAMPLE_COUNT}, new VM each sample)`);
-console.log(`local sequential 3-window paint ${sequentialPaint.toFixed(2)} ms (median of ${SAMPLE_COUNT}, cache miss each window)`);
-console.log(`local build + first 80-row paint ${buildFirstPaint.toFixed(2)} ms (median of ${SAMPLE_COUNT})`);
+console.log(`legacy window-token construction ${localTokenBuild.toFixed(2)} ms (median of ${SAMPLE_COUNT})`);
+console.log(`production cold first 80-row HTML compute ${coldPaint.toFixed(2)} ms (median of ${SAMPLE_COUNT}, new VM each sample)`);
+console.log(`production sequential 3-window HTML compute ${sequentialPaint.toFixed(2)} ms (median of ${SAMPLE_COUNT})`);
+console.log(`production build + first 80-row HTML compute ${buildFirstPaint.toFixed(2)} ms (median of ${SAMPLE_COUNT})`);
 console.log(`sink ${sink}`);

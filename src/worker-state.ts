@@ -11,6 +11,7 @@ export interface ProvisionalSeed {
   prefixLineStarts: Uint32Array;
   rows: number;
   lastRowEnd: number;
+  mountable: boolean;
 }
 
 export interface IdleViewState {
@@ -22,6 +23,7 @@ export interface PendingViewState {
   phase: 'pending';
   id: number;
   preserveScrollTop: number;
+  showProvisional: boolean;
 }
 
 export interface ProvisionalViewState {
@@ -32,10 +34,19 @@ export interface ProvisionalViewState {
   bytesIn: number;
   docs: number;
   preserveScrollTop: number;
+  showProvisional: boolean;
+  mountable: boolean;
   prefixLineStarts: Uint32Array;
   rows: number;
   lastRowEnd: number;
 }
+
+const NO_PROVISIONAL_SEED: ProvisionalSeed = {
+  prefixLineStarts: new Uint32Array([0]),
+  rows: 1,
+  lastRowEnd: 0,
+  mountable: false,
+};
 
 export interface HydratedViewState {
   phase: 'hydrated';
@@ -73,26 +84,34 @@ function validPhase2(reply: Phase2Reply): boolean {
   return true;
 }
 
-// Scan only the prefix needed to paint the first viewport. The final row end
-// is bounded separately because phase 1 does not provide a complete line
-// index. This keeps the provisional state honest and avoids a second full
-// source scan on the first paint.
-export function scanProvisional(pretty: string, maxRows: number): ProvisionalSeed {
+// Scan only the prefix needed to paint the first viewport. Refuse a prefix
+// whose complete rows exceed the raw-preview budget: one long line must not
+// turn the first paint into a multi-megabyte main-thread HTML build.
+export function scanProvisional(
+  pretty: string,
+  maxRows: number,
+  maxChars = 24000,
+): ProvisionalSeed {
   const target = Math.max(1, Math.floor(maxRows));
+  const budget = Math.max(1, Math.floor(maxChars));
+  const prefix = pretty.length > budget ? pretty.slice(0, budget) : pretty;
   const starts = [0];
   let cursor = 0;
   while (starts.length < target) {
-    const nl = pretty.indexOf('\n', cursor);
+    const nl = prefix.indexOf('\n', cursor);
     if (nl < 0) break;
     cursor = nl + 1;
     starts.push(cursor);
   }
   const lastStart = starts[starts.length - 1];
-  const nextNl = pretty.indexOf('\n', lastStart);
+  const nextNl = prefix.indexOf('\n', lastStart);
+  const lastRowEnd = nextNl < 0 ? Math.min(pretty.length, budget) : nextNl;
+  const mountable = nextNl >= 0 || pretty.length <= budget;
   return {
     prefixLineStarts: Uint32Array.from(starts),
     rows: starts.length,
-    lastRowEnd: nextNl < 0 ? pretty.length : nextNl,
+    lastRowEnd,
+    mountable,
   };
 }
 
@@ -103,21 +122,24 @@ export function idleViewState(id: number): IdleViewState {
 export function beginViewRequest(
   id: number,
   preserveScrollTop = 0,
+  showProvisional = false,
 ): PendingViewState {
   return {
     phase: 'pending',
     id,
     preserveScrollTop: Math.max(0, preserveScrollTop),
+    showProvisional,
   };
 }
 
 export function acceptPhase1(
   state: WorkerViewState,
   reply: Phase1Reply,
-  seed: ProvisionalSeed,
+  seed?: ProvisionalSeed,
 ): WorkerViewState {
   if (state.phase !== 'pending' || state.id !== reply.id) return state;
-  if (!validSeed(reply.pretty, seed)) return state;
+  const actualSeed = seed ?? NO_PROVISIONAL_SEED;
+  if (seed && !validSeed(reply.pretty, seed)) return state;
   return {
     phase: 'provisional',
     id: state.id,
@@ -126,9 +148,11 @@ export function acceptPhase1(
     bytesIn: reply.bytesIn,
     docs: reply.docs,
     preserveScrollTop: state.preserveScrollTop,
-    prefixLineStarts: seed.prefixLineStarts,
-    rows: seed.rows,
-    lastRowEnd: seed.lastRowEnd,
+    showProvisional: state.showProvisional,
+    mountable: actualSeed.mountable,
+    prefixLineStarts: actualSeed.prefixLineStarts,
+    rows: actualSeed.rows,
+    lastRowEnd: actualSeed.lastRowEnd,
   };
 }
 

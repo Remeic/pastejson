@@ -78,6 +78,7 @@ let bytesIn = 0;
 let lastFormatMs = 0;
 let wantCopyMin = false;
 let scroller: VScroll | null = null;
+let restoreScrollTop: number | null = null;
 
 // diff island state (module code loads lazily; see openDiff)
 let diffMod: typeof import('./diffview') | null = null;
@@ -407,12 +408,12 @@ async function openSearch(): Promise<void> {
   });
 }
 
-function closeSearch(): void {
+function closeSearch(repaint = true): void {
   if (!searchOpen) return;
   searchOpen = false;
   searchSt = null;
   searchbar.hidden = true;
-  if (curView === 'text' || curView === 'tree') scroller?.repaint();
+  if (repaint && (curView === 'text' || curView === 'tree')) scroller?.repaint();
 }
 
 
@@ -508,10 +509,12 @@ function hydrate(state: HydratedViewState): void {
     scroller.setWidth(state.maxLen * charW + 72);
     scroller.setRowCount(state.lines);
     scroller.host.scrollTop = previousScrollTop;
+    restoreScrollTop = null;
     setMode('loaded');
     fmtStatus(state.ms);
     return;
   }
+  restoreScrollTop = previousScrollTop;
   enterView(state.ms);
 }
 
@@ -545,6 +548,10 @@ function ensureWorker(): Worker {
       if (mode === 'loaded' && curView === 'tree' && scroller) {
         fmtTreeStatus();
         scroller.setRowCount(visibleRows.length);
+        if (restoreScrollTop !== null) {
+          scroller.host.scrollTop = restoreScrollTop;
+          restoreScrollTop = null;
+        }
         if (searchSt?.tree && searchOpen) scroller.repaint();
       }
       return;
@@ -561,6 +568,10 @@ function ensureWorker(): Worker {
       if (mode === 'loaded' && curView === 'min') {
         statusbar.textContent = ''; // clear 'preparing minified…'
         mountScroller('min', -1); // now with real row count + tokens
+        if (restoreScrollTop !== null && scroller) {
+          scroller.host.scrollTop = restoreScrollTop;
+          restoreScrollTop = null;
+        }
       }
       return;
     }
@@ -570,10 +581,15 @@ function ensureWorker(): Worker {
       return;
     }
     if ('phase' in m && m.phase === 1) {
-      const next = acceptPhase1(workerView, m as Phase1Reply, scanProvisional(m.pretty, provisionalRows()));
+      const seed = workerView.phase === 'pending' && workerView.showProvisional
+        ? scanProvisional(m.pretty, provisionalRows())
+        : undefined;
+      const next = acceptPhase1(workerView, m as Phase1Reply, seed);
       if (next === workerView || next.phase !== 'provisional') return;
       workerView = next;
-      mountProvisional(next);
+      body.dataset.viewState = 'provisional';
+      if (next.showProvisional && next.mountable) mountProvisional(next);
+      else statusbar.textContent = 'formatting…';
       return;
     }
     if ('phase' in m && m.phase === 2) {
@@ -585,7 +601,9 @@ function ensureWorker(): Worker {
   };
   nextWorker.onerror = () => {
     if (worker !== nextWorker) return;
+    nextWorker.terminate();
     worker = null;
+    restoreScrollTop = null;
     workerView = idleViewState(reqId);
     if (mode === 'working') showError('Formatting worker stopped', -1);
   };
@@ -595,6 +613,7 @@ function ensureWorker(): Worker {
 // ---------- load pipeline ----------
 function load(raw: string): void {
   reqId++;
+  restoreScrollTop = null;
   lastRaw = raw;
   bytesIn = raw.length;
   errbanner.hidden = true;
@@ -603,7 +622,7 @@ function load(raw: string): void {
   diffRes = null; // new doc invalidates any diff
   alignedRes = null;
   lastBVal = null;
-  closeSearch(); // offsets are doc-scoped — fresh doc, fresh search
+  closeSearch(false); // offsets are doc-scoped — fresh doc, fresh search
   if (panelOpen) dpStatus.textContent = 'doc changed — press Diff';
   if (curView === 'diff') {
     curView = 'text';
@@ -611,23 +630,25 @@ function load(raw: string): void {
   }
 
   if (raw.length > WORKER_THRESHOLD) {
-    workerView = beginViewRequest(reqId);
+    const showProvisional = curView === 'text';
+    workerView = beginViewRequest(reqId, 0, showProvisional);
     parsedValue = undefined;
-    vm = null;
-    ft = null;
-    expanded = null;
-    visibleRows = null;
+    // Destroy the old scroller before dropping its DOM. Its backing state
+    // stays valid until hydration so a queued rAF cannot call a null painter.
     scroller?.destroy();
     scroller = null;
     setMode('working');
-    // streaming preview: show raw immediately while worker parses
     out.hidden = false;
-    viewEl.innerHTML = '';
-    rawprev.hidden = false;
-    rawprev.innerHTML =
-      '<span class="working-chip">formatting…</span>' +
-      esc(raw.slice(0, PREVIEW_CHARS).replace(/(.{200})/g, '$1\n')) +
-      '\n…';
+    body.dataset.viewState = 'pending';
+    if (showProvisional) {
+      // streaming preview: show raw immediately while worker parses
+      viewEl.innerHTML = '';
+      rawprev.hidden = false;
+      rawprev.innerHTML =
+        '<span class="working-chip">formatting…</span>' +
+        esc(raw.slice(0, PREVIEW_CHARS).replace(/(.{200})/g, '$1\n')) +
+        '\n…';
+    }
     ensureWorker().postMessage({ type: 'parse', id: reqId, raw, indent });
     return;
   }
@@ -647,6 +668,18 @@ function load(raw: string): void {
   enterView(performance.now() - t0);
 }
 
+function discardDocumentView(): void {
+  scroller?.destroy();
+  scroller = null;
+  vm = null;
+  ft = null;
+  parsedValue = undefined;
+  expanded = null;
+  visibleRows = null;
+  restoreScrollTop = null;
+  viewEl.innerHTML = '';
+}
+
 function showError(
   message: string,
   offset: number,
@@ -654,6 +687,9 @@ function showError(
   col = 0,
   lineText = '',
 ): void {
+  // A retained old document is only valid while a large request is pending.
+  // Drop it before error controls become interactive.
+  discardDocumentView();
   delete body.dataset.viewState;
   setMode('error');
   out.hidden = true;
@@ -783,6 +819,10 @@ function enterView(ms: number): void {
     syncSeg('text');
   }
   mountScroller(curView, 0);
+  if (curView === 'text' && restoreScrollTop !== null && scroller) {
+    scroller.host.scrollTop = restoreScrollTop;
+    restoreScrollTop = null;
+  }
   fmtStatus(ms);
 }
 
@@ -889,6 +929,7 @@ toolbar.addEventListener('click', (e) => {
       reqId++;
       wantCopyMin = false;
     }
+    restoreScrollTop = null;
     curView = v;
     syncSeg(v);
     // clear view-scoped chips ('preparing minified…', 'building tree…') —
@@ -941,8 +982,9 @@ $<HTMLSelectElement>('sel-indent').addEventListener('change', (e) => {
   indent = v === 'tab' ? '\t' : Number(v);
   if (!vm) return;
   reqId++;
+  restoreScrollTop = null;
   workerView = parsedValue === undefined
-    ? beginViewRequest(reqId, scroller?.host.scrollTop ?? 0)
+    ? beginViewRequest(reqId, scroller?.host.scrollTop ?? 0, false)
     : idleViewState(reqId);
   closeSearch(); // pretty rebuilt — offsets shifted
   diffRes = null; // pretty changed — any diff is stale
@@ -987,6 +1029,7 @@ async function copyText(s: string): Promise<void> {
 
 function resetToLanding(): void {
   reqId++;
+  restoreScrollTop = null;
   workerView = idleViewState(reqId);
   delete body.dataset.viewState;
   vm = null;
@@ -1094,7 +1137,7 @@ $('btn-search-prev').addEventListener('click', () => {
 $('btn-search-next').addEventListener('click', () => {
   if (searchSt && searchSt.starts.length > 0) gotoMatch(searchSt, searchSt.cur + 1);
 });
-$('btn-search-close').addEventListener('click', closeSearch);
+$('btn-search-close').addEventListener('click', () => closeSearch());
 
 // ---------- clipboard auto-load (best effort, zero main-thread cost) ----------
 // Browser reality:
