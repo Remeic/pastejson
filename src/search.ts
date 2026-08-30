@@ -16,7 +16,7 @@
 // zero-hit outputs are byte-equal to the plain painters (tests enforce).
 
 import { esc, rangeHtml } from './highlight';
-import { valCls } from './render';
+import { textHtml, valCls } from './render';
 import type { FlatTree } from './tree';
 import type { ViewModel } from './viewmodel';
 
@@ -295,12 +295,16 @@ export function rowHtml(
 ): string {
   const P = vm.pretty;
   const LS = vm.lineStarts;
-  const TOK = vm.tokP;
   const L = vm.lines;
   const S = st.starts;
   const E = st.ends;
   const nm = S.length;
   const last = Math.min(first + count, L);
+  if (first >= last) return '';
+  // Keep the zero-hit Find path on the fused plain painter. This preserves
+  // byte equality and avoids rebuilding a local syntax table for no marks.
+  if (nm === 0) return textHtml(vm, first, count);
+  const TOK = vm.tokP;
   let h = '';
   for (let i = first; i < last; i++) {
     const s = LS[i];

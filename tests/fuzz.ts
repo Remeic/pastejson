@@ -3,7 +3,7 @@
 // Run: bun tests/fuzz.ts
 import assert from 'node:assert';
 import { emitJson } from '../src/serialize';
-import { tokenize, T_PUNCT } from '../src/tokenizer';
+import { tokenize, tokenizeWindow, T_PUNCT } from '../src/tokenizer';
 import { flatten, buildVisible } from '../src/tree';
 
 // deterministic xorshift
@@ -74,7 +74,11 @@ for (let it = 0; it < 500; it++) {
   for (let i = 0; i < toks.length; i += 2) {
     if (toks[i + 1] !== T_PUNCT) ref.push(toks[i], toks[i + 1]);
   }
-  assert.deepStrictEqual([...r.tokens], ref, `tokens mismatch @${it}`);
+  assert.deepStrictEqual(
+    [...tokenizeWindow(r.pretty, 0, r.pretty.length)],
+    ref,
+    `tokens mismatch @${it}`,
+  );
   const ft = flatten(v);
   assert.strictEqual(ft.rowCount, countNodes(v), `rowCount mismatch @${it}`);
   assert.strictEqual(r.lines, r.lineStarts.length, `lines mismatch @${it}`);

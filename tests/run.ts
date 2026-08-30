@@ -1,6 +1,7 @@
 // Plain assert-based test runner. Run: bun tests/run.ts
 import assert from 'node:assert';
-import { tokenize, T_STR, T_NUM, T_KEY, T_PUNCT, T_TRUE, T_FALSE, T_NULL } from '../src/tokenizer';
+import { readFileSync } from 'node:fs';
+import { tokenize, tokenizeWindow, T_STR, T_NUM, T_KEY, T_PUNCT, T_TRUE, T_FALSE, T_NULL } from '../src/tokenizer';
 import { parseJson, parseInput } from '../src/parse';
 import { emitJson } from '../src/serialize';
 import { buildView, ensureMin } from '../src/viewmodel';
@@ -8,8 +9,8 @@ import { flatten, buildVisible } from '../src/tree';
 import { rangeHtml } from '../src/highlight';
 import { diffJson, diffAligned, OP_ADD, OP_DEL, OP_SAME, OP_MOD, MYERS_TRACE_BUDGET, type DiffResult } from '../src/diffcore';
 import { diffHtml, sbsHtml } from '../src/diffview';
-import { treeHtml } from '../src/render';
-import { textHtml } from '../src/render';
+import { treeHtml, provisionalTextHtml, textHtml } from '../src/render';
+import { VScroll } from '../src/vscroll';
 import {
   findAll,
   lineOf,
@@ -20,6 +21,30 @@ import {
   type SearchOpts,
   type TreeHits,
 } from '../src/search';
+import {
+  type Phase1Reply,
+  type Phase2Reply,
+} from '../src/worker-protocol';
+const PHASE1_KEYS = ['id', 'ok', 'phase', 'pretty', 'indent', 'bytesIn', 'docs'];
+const PHASE2_KEYS = [
+  'id', 'ok', 'phase', 'lines', 'maxLen', 'indent', 'bytesIn', 'docs', 'ms', 'lsLen',
+  'lineStartsBuf', 'tokPLen', 'tokPBuf',
+];
+function makePhase1Reply(input: Omit<Phase1Reply, 'ok' | 'phase'>): Phase1Reply {
+  return { id: input.id, ok: true, phase: 1, pretty: input.pretty, indent: input.indent, bytesIn: input.bytesIn, docs: input.docs };
+}
+function makePhase2Reply(input: Omit<Phase2Reply, 'ok' | 'phase' | 'ms'> & { ms?: number }): Phase2Reply {
+  return { id: input.id, ok: true, phase: 2, lines: input.lines, maxLen: input.maxLen, indent: input.indent, bytesIn: input.bytesIn, docs: input.docs, ms: input.ms ?? 0, lsLen: input.lsLen, lineStartsBuf: input.lineStartsBuf, tokPLen: input.tokPLen, tokPBuf: input.tokPBuf };
+}
+import {
+  acceptPhase1,
+  acceptPhase2,
+  beginViewRequest,
+  idleViewState,
+  scanProvisional,
+  type ProvisionalSeed,
+  type WorkerViewState,
+} from '../src/worker-state';
 
 let passed = 0;
 function ok(name: string, fn: () => void): void {
@@ -27,6 +52,595 @@ function ok(name: string, fn: () => void): void {
   passed++;
   console.log('  ✓', name);
 }
+
+// ---------- two-phase worker/main seam ----------
+const phaseSeed: ProvisionalSeed = {
+  prefixLineStarts: new Uint32Array([0, 3]),
+  rows: 2,
+  lastRowEnd: 7,
+  mountable: true,
+};
+
+function phase2Buffers(): { lineStartsBuf: ArrayBuffer; tokPBuf: ArrayBuffer } {
+  return {
+    lineStartsBuf: new Uint32Array([0, 3, 7]).buffer,
+    tokPBuf: new Int32Array([2, 0, 6, 1]).buffer,
+  };
+}
+
+class FakeElement {
+  classList = { add: (_name: string): void => {} };
+  style: Record<string, string> = {};
+  scrollTop = 0;
+  clientHeight = 40;
+  private html = '';
+  private children: FakeElement[] = [];
+
+  set innerHTML(value: string) {
+    this.html = value;
+    this.children = value.includes('vs-spacer')
+      ? [new FakeElement(), new FakeElement()]
+      : [];
+  }
+
+  get innerHTML(): string {
+    return this.html;
+  }
+
+  get firstElementChild(): FakeElement | null {
+    return this.children[0] ?? null;
+  }
+
+  get lastElementChild(): FakeElement | null {
+    return this.children[this.children.length - 1] ?? null;
+  }
+
+  addEventListener(..._args: unknown[]): void {}
+  removeEventListener(..._args: unknown[]): void {}
+}
+
+ok('two-phase protocol: fixed shapes keep pretty only in phase 1', () => {
+  const p1 = makePhase1Reply({
+    id: 4,
+    pretty: '{\n  "a": 1\n}',
+    indent: 2,
+    bytesIn: 9,
+    docs: 0,
+  });
+  assert.deepStrictEqual(Object.keys(p1), PHASE1_KEYS);
+  assert.strictEqual(p1.pretty, '{\n  "a": 1\n}');
+  assert.ok(!('ms' in p1));
+  assert.ok(!('html' in p1));
+
+  const buffers = phase2Buffers();
+  const p2 = makePhase2Reply({
+    id: 4,
+    lines: 3,
+    maxLen: 8,
+    indent: 2,
+    bytesIn: 9,
+    docs: 0,
+    ms: 12.5,
+    lsLen: 3,
+    ...buffers,
+    tokPLen: 4,
+  });
+  assert.deepStrictEqual(Object.keys(p2), PHASE2_KEYS);
+  assert.strictEqual(p2.ms, 12.5);
+  assert.ok(!('pretty' in p2));
+  assert.ok(!('html' in p2));
+});
+
+ok('VScroll: phase 2 before first rAF still paints provisional first', () => {
+  const frames: FrameRequestCallback[] = [];
+  const oldRaf = globalThis.requestAnimationFrame;
+  const oldResizeObserver = globalThis.ResizeObserver;
+  const globalWithDom = globalThis as unknown as {
+    requestAnimationFrame: typeof requestAnimationFrame;
+    ResizeObserver: typeof ResizeObserver | undefined;
+  };
+  const host = new FakeElement();
+  const paints: string[] = [];
+
+  globalWithDom.requestAnimationFrame = ((cb: FrameRequestCallback): number => {
+    frames.push(cb);
+    return frames.length;
+  }) as typeof requestAnimationFrame;
+  globalWithDom.ResizeObserver = undefined;
+  try {
+    const scroller = new VScroll(host as unknown as HTMLElement, {
+      rowH: 20,
+      overscan: 0,
+      paint: () => {
+        paints.push('provisional');
+        return 'P';
+      },
+    });
+    scroller.setRowCount(2);
+    scroller.setPainter(() => {
+      paints.push('hydrated');
+      return 'H';
+    });
+    assert.strictEqual(frames.length, 1);
+
+    frames.shift()!(0);
+    assert.deepStrictEqual(paints, ['provisional']);
+    assert.strictEqual(host.lastElementChild?.innerHTML, 'P');
+    assert.strictEqual(frames.length, 1);
+
+    frames.shift()!(0);
+    assert.deepStrictEqual(paints, ['provisional', 'hydrated']);
+    assert.strictEqual(host.lastElementChild?.innerHTML, 'H');
+    scroller.destroy();
+  } finally {
+    globalWithDom.requestAnimationFrame = oldRaf;
+    globalWithDom.ResizeObserver = oldResizeObserver;
+  }
+});
+
+ok('two-phase state: phase 1 becomes hydrated only after matching phase 2', () => {
+  const p1 = makePhase1Reply({
+    id: 10,
+    pretty: 'x\ny\nz',
+    indent: 2,
+    bytesIn: 5,
+    docs: 0,
+  });
+  let state: WorkerViewState = beginViewRequest(10);
+  state = acceptPhase1(state, p1, {
+    prefixLineStarts: new Uint32Array([0, 2]),
+    rows: 2,
+    lastRowEnd: 3,
+    mountable: true,
+  });
+  assert.strictEqual(state.phase, 'provisional');
+  if (state.phase !== 'provisional') return;
+  assert.strictEqual(state.showProvisional, false);
+  assert.strictEqual(state.pretty, p1.pretty);
+  assert.deepStrictEqual([...state.prefixLineStarts], [0, 2]);
+  assert.strictEqual(state.rows, 2);
+
+  const buffers = phase2Buffers();
+  const p2 = makePhase2Reply({
+    id: 10,
+    lines: 3,
+    maxLen: 8,
+    indent: 2,
+    bytesIn: 5,
+    docs: 0,
+    ms: 23.75,
+    lsLen: 3,
+    ...buffers,
+    tokPLen: 4,
+  });
+  state = acceptPhase2(state, p2);
+  assert.strictEqual(state.phase, 'hydrated');
+  if (state.phase !== 'hydrated') return;
+  assert.strictEqual(state.pretty, p1.pretty);
+  assert.strictEqual(state.ms, 23.75);
+  assert.deepStrictEqual([...state.lineStarts], [0, 3, 7]);
+  assert.deepStrictEqual([...state.tokP], [2, 0, 6, 1]);
+});
+
+ok('two-phase state: phase 2 without matching phase 1 is ignored', () => {
+  const state: WorkerViewState = beginViewRequest(11);
+  const buffers = phase2Buffers();
+  const reply = makePhase2Reply({
+    id: 11,
+    lines: 3,
+    maxLen: 8,
+    indent: 2,
+    bytesIn: 5,
+    docs: 0,
+    lsLen: 3,
+    ...buffers,
+    tokPLen: 4,
+  });
+  assert.strictEqual(acceptPhase2(state, reply), state);
+});
+
+ok('two-phase state: stale phase 1 and phase 2 cannot replace a newer request', () => {
+  const oldP1 = makePhase1Reply({
+    id: 20,
+    pretty: 'old',
+    indent: 2,
+    bytesIn: 3,
+    docs: 0,
+  });
+  let state: WorkerViewState = beginViewRequest(20);
+  state = beginViewRequest(21);
+  assert.strictEqual(acceptPhase1(state, oldP1, phaseSeed), state);
+
+  const newerP1 = makePhase1Reply({
+    id: 21,
+    pretty: 'new',
+    indent: 2,
+    bytesIn: 3,
+    docs: 0,
+  });
+  state = acceptPhase1(state, newerP1, {
+    prefixLineStarts: new Uint32Array([0]),
+    rows: 1,
+    lastRowEnd: 3,
+    mountable: true,
+  });
+  if (state.phase !== 'provisional') return;
+  const oldBuffers = phase2Buffers();
+  const oldP2 = makePhase2Reply({
+    id: 20,
+    lines: 3,
+    maxLen: 8,
+    indent: 2,
+    bytesIn: 3,
+    docs: 0,
+    lsLen: 3,
+    ...oldBuffers,
+    tokPLen: 4,
+  });
+  assert.strictEqual(acceptPhase2(state, oldP2), state);
+});
+
+ok('two-phase state: paste A then B drops both stale A phases', () => {
+  const a1 = makePhase1Reply({
+    id: 50,
+    pretty: 'A',
+    indent: 2,
+    bytesIn: 1,
+    docs: 0,
+  });
+  let state: WorkerViewState = acceptPhase1(
+    beginViewRequest(50),
+    a1,
+    { prefixLineStarts: new Uint32Array([0]), rows: 1, lastRowEnd: 1, mountable: true },
+  );
+  assert.strictEqual(state.phase, 'provisional');
+  state = beginViewRequest(51);
+  assert.strictEqual(acceptPhase1(state, a1, phaseSeed), state);
+  const a2 = makePhase2Reply({
+    id: 50,
+    lines: 1,
+    maxLen: 1,
+    indent: 2,
+    bytesIn: 1,
+    docs: 0,
+    lsLen: 1,
+    lineStartsBuf: new Uint32Array([0]).buffer,
+    tokPLen: 2,
+    tokPBuf: new Int32Array([1, T_STR]).buffer,
+  });
+  assert.strictEqual(acceptPhase2(state, a2), state);
+
+  const b1 = makePhase1Reply({
+    id: 51,
+    pretty: 'B',
+    indent: 2,
+    bytesIn: 1,
+    docs: 0,
+  });
+  state = acceptPhase1(state, b1, {
+    prefixLineStarts: new Uint32Array([0]),
+    rows: 1,
+    lastRowEnd: 1,
+    mountable: true,
+  });
+  assert.strictEqual(state.phase, 'provisional');
+  if (state.phase !== 'provisional') return;
+  assert.strictEqual(state.pretty, 'B');
+});
+
+ok('two-phase state: a reformat race accepts only the new indent', () => {
+  const oldP1 = makePhase1Reply({
+    id: 60,
+    pretty: '{\n  "a": 1\n}',
+    indent: 2,
+    bytesIn: 7,
+    docs: 0,
+  });
+  let state: WorkerViewState = acceptPhase1(beginViewRequest(60), oldP1, {
+    prefixLineStarts: new Uint32Array([0, 2]),
+    rows: 2,
+    lastRowEnd: 11,
+    mountable: true,
+  });
+  assert.strictEqual(state.phase, 'provisional');
+  state = beginViewRequest(61);
+  const oldP2 = makePhase2Reply({
+    id: 60,
+    lines: 3,
+    maxLen: 8,
+    indent: 2,
+    bytesIn: 7,
+    docs: 0,
+    lsLen: 3,
+    ...phase2Buffers(),
+    tokPLen: 4,
+  });
+  assert.strictEqual(acceptPhase2(state, oldP2), state);
+
+  const newP1 = makePhase1Reply({
+    id: 61,
+    pretty: '{\n    "a": 1\n}',
+    indent: 4,
+    bytesIn: 7,
+    docs: 0,
+  });
+  state = acceptPhase1(state, newP1, {
+    prefixLineStarts: new Uint32Array([0, 2]),
+    rows: 2,
+    lastRowEnd: 13,
+    mountable: true,
+  });
+  assert.strictEqual(state.phase, 'provisional');
+  if (state.phase !== 'provisional') return;
+  assert.strictEqual(state.indent, 4);
+  assert.strictEqual(state.pretty, newP1.pretty);
+});
+
+ok('two-phase state: reformat preserves the captured scroll position', () => {
+  const p1 = makePhase1Reply({
+    id: 62,
+    pretty: '{\n  "a": 1\n}',
+    indent: 2,
+    bytesIn: 7,
+    docs: 0,
+  });
+  let state: WorkerViewState = acceptPhase1(
+    beginViewRequest(62, 640),
+    p1,
+    { prefixLineStarts: new Uint32Array([0, 2]), rows: 2, lastRowEnd: 11, mountable: true },
+  );
+  assert.strictEqual(state.phase, 'provisional');
+  if (state.phase !== 'provisional') return;
+  assert.strictEqual(state.preserveScrollTop, 640);
+  const p2 = makePhase2Reply({
+    id: 62,
+    lines: 3,
+    maxLen: 8,
+    indent: 2,
+    bytesIn: 7,
+    docs: 0,
+    lsLen: 3,
+    ...phase2Buffers(),
+    tokPLen: 4,
+  });
+  state = acceptPhase2(state, p2);
+  assert.strictEqual(state.phase, 'hydrated');
+  if (state.phase !== 'hydrated') return;
+  assert.strictEqual(state.preserveScrollTop, 640);
+});
+
+ok('two-phase state: fresh Text may mount, deep Text/Tree/Min reformats may not', () => {
+  const p1 = makePhase1Reply({
+    id: 63,
+    pretty: 'x\ny',
+    indent: 2,
+    bytesIn: 3,
+    docs: 0,
+  });
+  let fresh = acceptPhase1(
+    beginViewRequest(63, 0, true),
+    p1,
+    { prefixLineStarts: new Uint32Array([0, 2]), rows: 2, lastRowEnd: 3, mountable: true },
+  );
+  assert.strictEqual(fresh.phase, 'provisional');
+  if (fresh.phase !== 'provisional') return;
+  assert.strictEqual(fresh.showProvisional, true);
+
+  for (const [id, scrollTop] of [[64, 16000], [65, 480], [66, 920]] as const) {
+    const pending = beginViewRequest(id, scrollTop, false);
+    assert.strictEqual(pending.showProvisional, false);
+    fresh = acceptPhase1(pending, { ...p1, id }, {
+      prefixLineStarts: new Uint32Array([0, 2]),
+      rows: 2,
+      lastRowEnd: 3,
+      mountable: true,
+    });
+    assert.strictEqual(fresh.phase, 'provisional');
+    if (fresh.phase !== 'provisional') return;
+    assert.strictEqual(fresh.showProvisional, false);
+    assert.strictEqual(fresh.preserveScrollTop, scrollTop);
+  }
+});
+
+ok('main path: fresh large Text load does not preserve the old scroller', () => {
+  const source = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
+  assert.match(source, /const showProvisional = curView === 'text';/);
+  assert.match(source, /workerView = beginViewRequest\(reqId, 0, showProvisional\);/);
+  assert.match(source, /scroller\?\.destroy\(\);\s*scroller = null;/);
+});
+
+ok('main path: disabled provisional targets accept phase 1 without scanning', () => {
+  const p1 = makePhase1Reply({ id: 67, pretty: 'old', indent: 2, bytesIn: 3, docs: 0 });
+  const state = acceptPhase1(beginViewRequest(67, 16000, false), p1);
+  assert.strictEqual(state.phase, 'provisional');
+  if (state.phase === 'provisional') assert.strictEqual(state.mountable, false);
+  const source = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
+  assert.match(source, /const seed = workerView\.phase === 'pending' && workerView\.showProvisional[\s\S]*scanProvisional\(m\.pretty/);
+});
+
+ok('main path: invalid large B discards retained A before error controls', () => {
+  const source = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
+  const start = source.indexOf('function showError(');
+  const end = source.indexOf('function mountScroller(', start);
+  const showError = source.slice(start, end);
+  assert.match(showError, /discardDocumentView\(\);\s*delete body\.dataset\.viewState;\s*setMode\('error'\)/);
+});
+
+ok('worker error path: phase 2 replies fixed-shape error and failed worker terminates', () => {
+  const workerSource = readFileSync(new URL('../src/worker.ts', import.meta.url), 'utf8');
+  const phase2Start = workerSource.indexOf('setTimeout(() =>');
+  const phase2End = workerSource.indexOf('}, 0);', phase2Start);
+  const phase2 = workerSource.slice(phase2Start, phase2End);
+  assert.match(phase2, /try \{/);
+  assert.match(phase2, /catch \(err\)/);
+  assert.match(phase2, /cachedDoc = null;\s*replyErr\(doc\.id/);
+
+  const mainSource = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
+  assert.match(mainSource, /nextWorker\.terminate\(\);\s*worker = null;/);
+});
+
+ok('two-phase state: reset and worker restart reject old replies', () => {
+  const p1 = makePhase1Reply({
+    id: 30,
+    pretty: 'old',
+    indent: 2,
+    bytesIn: 3,
+    docs: 0,
+  });
+  const reset = idleViewState(31);
+  assert.strictEqual(acceptPhase1(reset, p1, phaseSeed), reset);
+  const resetP2 = makePhase2Reply({
+    id: 30,
+    lines: 3,
+    maxLen: 8,
+    indent: 2,
+    bytesIn: 3,
+    docs: 0,
+    lsLen: 3,
+    ...phase2Buffers(),
+    tokPLen: 4,
+  });
+  assert.strictEqual(acceptPhase2(reset, resetP2), reset);
+
+  let restarted: WorkerViewState = acceptPhase1(beginViewRequest(30), p1, phaseSeed);
+  assert.strictEqual(restarted.phase, 'pending');
+  restarted = idleViewState(30);
+  assert.strictEqual(acceptPhase1(restarted, p1, phaseSeed), restarted);
+  assert.strictEqual(acceptPhase2(restarted, resetP2), restarted);
+});
+
+ok('two-phase state: null and JSONL metadata remain explicit', () => {
+  const nullReply = makePhase1Reply({
+    id: 35,
+    pretty: 'null',
+    indent: 2,
+    bytesIn: 4,
+    docs: 0,
+  });
+  let state: WorkerViewState = acceptPhase1(
+    beginViewRequest(35),
+    nullReply,
+    scanProvisional(nullReply.pretty, 8),
+  );
+  assert.strictEqual(state.phase, 'provisional');
+  if (state.phase !== 'provisional') return;
+  assert.strictEqual(state.pretty, 'null');
+  assert.strictEqual(state.docs, 0);
+
+  const jsonlReply = makePhase1Reply({
+    id: 36,
+    pretty: '[\n  1,\n  2\n]',
+    indent: 2,
+    bytesIn: 7,
+    docs: 2,
+  });
+  state = acceptPhase1(
+    beginViewRequest(36),
+    jsonlReply,
+    scanProvisional(jsonlReply.pretty, 8),
+  );
+  assert.strictEqual(state.phase, 'provisional');
+  if (state.phase !== 'provisional') return;
+  assert.strictEqual(state.docs, 2);
+  assert.strictEqual(state.pretty, jsonlReply.pretty);
+});
+
+ok('two-phase provisional scan and painter use only the visible prefix', () => {
+  const value = { rows: Array.from({ length: 12 }, (_, i) => ({ id: i, ok: i % 2 === 0 })) };
+  const full = buildView(value, 2, 100);
+  const p1 = makePhase1Reply({
+    id: 40,
+    pretty: full.pretty,
+    indent: 2,
+    bytesIn: 100,
+    docs: 0,
+  });
+  const seed = scanProvisional(full.pretty, 6);
+  let state: WorkerViewState = acceptPhase1(beginViewRequest(40), p1, seed);
+  assert.strictEqual(state.phase, 'provisional');
+  if (state.phase !== 'provisional') return;
+  assert.deepStrictEqual([...state.prefixLineStarts], [...full.lineStarts.slice(0, 6)]);
+  assert.strictEqual(
+    provisionalTextHtml(state, 0, state.rows),
+    textHtml(full, 0, state.rows),
+  );
+
+  const p2 = makePhase2Reply({
+    id: 40,
+    lines: full.lines,
+    maxLen: full.maxLen,
+    indent: 2,
+    bytesIn: 100,
+    docs: 0,
+    lsLen: full.lineStarts.length,
+    lineStartsBuf: full.lineStarts.buffer as ArrayBuffer,
+    tokPLen: full.tokP.length,
+    tokPBuf: full.tokP.buffer as ArrayBuffer,
+  });
+  state = acceptPhase2(state, p2);
+  assert.strictEqual(state.phase, 'hydrated');
+  if (state.phase !== 'hydrated') return;
+  assert.strictEqual(state.pretty, p1.pretty);
+  assert.deepStrictEqual([...state.lineStarts], [...full.lineStarts]);
+  assert.deepStrictEqual([...state.tokP], [...full.tokP]);
+});
+
+ok('two-phase provisional painter stays byte-exact across roots, indents, and bounds', () => {
+  const values: unknown[] = [
+    null,
+    '',
+    'quote" slash\\ newline\n nul\u0000 lone\ud800 😀',
+    -123.456,
+    true,
+    { nasty: 'line\nbreak', number: 1e21, nested: [null, false, 'x\\y'] },
+    [{ key: 'a\tb' }, { value: '\u001f' }],
+  ];
+  for (const [index, value] of values.entries()) {
+    for (const indent of [2, 4, '\t'] as const) {
+      const full = buildView(value, indent, JSON.stringify(value).length);
+      const bounds = [...new Set([1, 2, Math.ceil(full.lines / 2), full.lines])];
+      for (const rows of bounds) {
+        const seed = scanProvisional(full.pretty, rows, 24000);
+        assert.strictEqual(seed.mountable, true, `unexpected budget fallback @${index}/${indent}/${rows}`);
+        const p1 = makePhase1Reply({
+          id: 80 + index,
+          pretty: full.pretty,
+          indent,
+          bytesIn: full.bytesIn,
+          docs: 0,
+        });
+        const state = acceptPhase1(beginViewRequest(80 + index, 0, true), p1, seed);
+        assert.strictEqual(state.phase, 'provisional');
+        if (state.phase !== 'provisional') continue;
+        assert.strictEqual(
+          provisionalTextHtml(state, 0, rows),
+          textHtml(full, 0, rows),
+          `provisional mismatch @${index}/${indent}/${rows}`,
+        );
+      }
+    }
+  }
+});
+
+ok('two-phase provisional budget rejects one-line and huge early-line payloads', () => {
+  const huge = 'x'.repeat(300_000);
+  const sources = [JSON.stringify(huge), JSON.stringify({ blob: huge, tail: 1 }, null, 2)];
+  for (const [index, pretty] of sources.entries()) {
+    const seed = scanProvisional(pretty, 96);
+    assert.strictEqual(seed.mountable, false, `budget fallback missing @${index}`);
+    assert.strictEqual(seed.lastRowEnd, 24_000, `budget span not capped @${index}`);
+    assert.ok([...seed.prefixLineStarts].every((start) => start <= 24_000));
+    const state = acceptPhase1(
+      beginViewRequest(90 + index, 0, true),
+      makePhase1Reply({ id: 90 + index, pretty, indent: 2, bytesIn: pretty.length, docs: 0 }),
+      seed,
+    );
+    assert.strictEqual(state.phase, 'provisional');
+    if (state.phase === 'provisional') assert.strictEqual(state.mountable, false);
+  }
+  const source = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
+  assert.match(source, /if \(next\.showProvisional && next\.mountable\) mountProvisional\(next\)/);
+});
 
 // ---------- tokenizer ----------
 ok('tokenize basic object', () => {
@@ -53,6 +667,22 @@ ok('tokenize literals true/false/null', () => {
 ok('tokenize numbers with exponent', () => {
   const t = tokenize('-12.34e+5');
   assert.deepStrictEqual([...t], [9, T_NUM]);
+});
+
+ok('tokenizeWindow completes a token beyond the requested end', () => {
+  const src = JSON.stringify({ escaped: 'quote"\\\nvalue', tail: 1 }, null, 2);
+  const end = src.indexOf('quote') + 3;
+  const local = tokenizeWindow(src, 0, end);
+  const global = tokenize(src);
+  const expected: number[] = [];
+  let lastEnd = -1;
+  for (let i = 0; i < global.length; i += 2) {
+    if (global[i + 1] === T_PUNCT) continue;
+    expected.push(global[i], global[i + 1]);
+    lastEnd = global[i];
+    if (lastEnd > end) break;
+  }
+  assert.deepStrictEqual([...local], expected);
 });
 
 // ---------- parse errors ----------
@@ -113,6 +743,7 @@ ok('emitJson matches stringify for escaped values and tokens', () => {
   for (let i = 0; i < toks.length; i += 2) {
     if (toks[i + 1] !== T_PUNCT) ref.push(toks[i], toks[i + 1]);
   }
+  assert.deepStrictEqual([...tokenizeWindow(r.pretty, 0, r.pretty.length)], ref);
   assert.deepStrictEqual([...r.tokens], ref);
 });
 
@@ -120,7 +751,7 @@ ok('emitJson handles one-line roots', () => {
   const scalar = emitJson(1, 2, 8);
   assert.strictEqual(scalar.pretty, '1');
   assert.strictEqual(scalar.lines, 1);
-  assert.deepStrictEqual([...scalar.tokens], [1, T_NUM]);
+  assert.deepStrictEqual([...tokenizeWindow(scalar.pretty, 0, scalar.pretty.length)], [1, T_NUM]);
 });
 
 ok('emitJson numeric fast paths keep exact token ends', () => {
@@ -133,16 +764,25 @@ ok('emitJson numeric fast paths keep exact token ends', () => {
 
   for (const value of values) {
     const root = emitJson(value, 2, 16);
-    assert.deepStrictEqual([...root.tokens], [root.pretty.length, T_NUM]);
+    assert.deepStrictEqual([...tokenizeWindow(root.pretty, 0, root.pretty.length)], [root.pretty.length, T_NUM]);
+  }
+
+  for (const value of [NaN, Infinity, -Infinity]) {
+    const root = emitJson(value, 2, 16);
+    assert.strictEqual(root.pretty, 'null');
+    assert.deepStrictEqual([...root.tokens], [4, T_NULL]);
   }
 
   const nested = emitJson(values, 2, 256);
   const expected = tokenize(nested.pretty);
-  const numberTokens: number[] = [];
+  const ref: number[] = [];
   for (let i = 0; i < expected.length; i += 2) {
-    if (expected[i + 1] === T_NUM) numberTokens.push(expected[i], expected[i + 1]);
+    if (expected[i + 1] !== T_PUNCT) ref.push(expected[i], expected[i + 1]);
   }
-  assert.deepStrictEqual([...nested.tokens], numberTokens);
+  assert.deepStrictEqual(
+    [...tokenizeWindow(nested.pretty, 0, nested.pretty.length)],
+    ref,
+  );
 });
 
 // ---------- tree flatten ----------
@@ -211,7 +851,7 @@ ok('rangeHtml wraps token classes + escapes html', () => {
   assert.ok(r.ok);
   if (!r.ok) return;
   const vm = buildView(r.value, 2, src.length);
-  const html = rangeHtml(vm.pretty, vm.tokP, 0, Math.min(40, vm.pretty.length));
+  const html = rangeHtml(vm.pretty, tokenizeWindow(vm.pretty, 0, vm.pretty.length), 0, Math.min(40, vm.pretty.length));
   assert.ok(html.includes('<i class=k>') || html.includes('<i class=s>'));
   assert.ok(html.includes('&lt;')); // escaped
   assert.ok(!html.includes('<b')); // raw < never leaks unescaped as tag
@@ -511,6 +1151,104 @@ ok('aligned: seeded fuzz pair invariants', () => {
 });
 
 // ---------- painters (lazy island views) ----------
+function globalSyntaxTokens(src: string): Int32Array {
+  const all = tokenize(src);
+  const kept: number[] = [];
+  for (let i = 0; i < all.length; i += 2) {
+    if (all[i + 1] !== T_PUNCT) kept.push(all[i], all[i + 1]);
+  }
+  return Int32Array.from(kept);
+}
+
+function oldTextHtml(vm: ReturnType<typeof buildView>, first: number, count: number): string {
+  const P = vm.pretty;
+  const LS = vm.lineStarts;
+  const TOK = globalSyntaxTokens(P);
+  const last = Math.min(first + count, vm.lines);
+  let h = '';
+  for (let i = first; i < last; i++) {
+    const s = LS[i];
+    const e = i + 1 < vm.lines ? LS[i + 1] - 1 : P.length;
+    h += `<div class="row"><span class="ln">${i + 1}</span><code>${rangeHtml(P, TOK, s, e)}</code></div>`;
+  }
+  return h;
+}
+
+function oldFirstEndAfter(ends: Int32Array, x: number): number {
+  let lo = 0;
+  let hi = ends.length;
+  while (lo < hi) {
+    const m = (lo + hi) >> 1;
+    if (ends[m] <= x) lo = m + 1;
+    else hi = m;
+  }
+  return lo;
+}
+
+function oldSearchHtml(
+  vm: ReturnType<typeof buildView>,
+  st: ReturnType<typeof findAll>,
+  first: number,
+  count: number,
+): string {
+  const P = vm.pretty;
+  const LS = vm.lineStarts;
+  const TOK = globalSyntaxTokens(P);
+  const S = st.starts;
+  const E = st.ends;
+  const last = Math.min(first + count, vm.lines);
+  let h = '';
+  for (let i = first; i < last; i++) {
+    const s = LS[i];
+    const e = i + 1 < vm.lines ? LS[i + 1] - 1 : P.length;
+    let k = oldFirstEndAfter(E, s);
+    if (k >= S.length || S[k] >= e) {
+      h += `<div class="row"><span class="ln">${i + 1}</span><code>${rangeHtml(P, TOK, s, e)}</code></div>`;
+      continue;
+    }
+    let c = s;
+    let body = '';
+    while (k < S.length && S[k] < e && c < e) {
+      const me = Math.min(E[k], e);
+      const ms = S[k] > c ? S[k] : c;
+      if (S[k] > c) body += rangeHtml(P, TOK, c, S[k]);
+      if (me > ms) {
+        body += `<mark class="${k === st.cur ? 'mc' : 'm'}">${P.slice(ms, me).replace(/[&<>]/g, (c) => c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;')}</mark>`;
+        c = me;
+      }
+      k++;
+    }
+    if (c < e) body += rangeHtml(P, TOK, c, e);
+    h += `<div class="row"><span class="ln">${i + 1}</span><code>${body}</code></div>`;
+  }
+  return h;
+}
+
+ok('painters: local windows equal the global-token renderer', () => {
+  const value = {
+    first: 'quote"\\\nvalue <tag>',
+    items: Array.from({ length: 80 }, (_, i) => ({ id: i, text: i % 3 === 0 ? 'escaped \\ value' : 'plain' })),
+    deep: [[[[[[{ final: 'tail' }]]]]]],
+    last: '<last>',
+  };
+  const vm = buildView(value, 2, 100);
+  const windows = [
+    [0, 4],
+    [Math.floor(vm.lines / 2), 7],
+    [vm.lines - 6, 6],
+  ];
+  for (const [first, count] of windows) {
+    assert.strictEqual(textHtml(vm, first, count), oldTextHtml(vm, first, count), `window ${first}:${count}`);
+  }
+});
+
+ok('painters: deep closing-container windows keep token boundaries exact', () => {
+  const value = { outer: [[[[[[{ escaped: 'a"\\\nb' }]]]]]], after: 'after' };
+  const vm = buildView(value, 2, 100);
+  const first = vm.lines - 8;
+  assert.strictEqual(textHtml(vm, first, 8), oldTextHtml(vm, first, 8));
+});
+
 ok('painters: treeHtml renders flatten output end-to-end', () => {
   // regression guard: the valIdx drift crash surfaced here first (valCls(undefined))
   const ft = flatten({ a: 1, b: [2, 'x'], c: { d: null } });
@@ -643,6 +1381,15 @@ ok('search: rowHtml zero matches ≡ textHtml byte-for-byte', () => {
   const vm = buildView({ a: [1, '<x>'], b: null }, 2, 40);
   const st = findAll(vm, 'qqq', CI);
   assert.deepStrictEqual(rowHtml(vm, st, 0, vm.lines), textHtml(vm, 0, vm.lines));
+});
+
+ok('search: local zero-hit and cross-line windows equal global-token output', () => {
+  const vm = buildView({ a: 1, b: 2, c: 'escaped <value>' }, 2, 40);
+  const miss = findAll(vm, 'not-present', CI);
+  assert.strictEqual(rowHtml(vm, miss, 0, vm.lines), oldSearchHtml(vm, miss, 0, vm.lines));
+  const cross = findAll(vm, '1,\n  "b"', CI);
+  assert.strictEqual(cross.starts.length, 1);
+  assert.strictEqual(rowHtml(vm, cross, 0, vm.lines), oldSearchHtml(vm, cross, 0, vm.lines));
 });
 
 ok('search: rowHtml marks, current match class, escapes inside marks', () => {

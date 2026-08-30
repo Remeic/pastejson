@@ -1,14 +1,14 @@
 // Fused JSON view-model builder — v6 (closure-free hot path).
-// Text from NATIVE JSON.stringify; zero-string length walk emits tokens +
-// line index. TREE IS LAZY: flatten() rebuilds it on demand (first Tree
-// open / worker getTree) — the paste→text path never pays for tree columns.
+// Text from NATIVE JSON.stringify; zero-string length walk emits the line
+// index and the global non-punctuation syntax-token table. TREE remains lazy:
+// flatten() rebuilds it on demand.
 //
 // Measured invariants (see AGENTS.md "The floor" + bench):
 // - stringify (native) + parse (native) are the floor; the JS walk is the
 //   only optimizable slice.
 // - Captured-scope writes cost ~40% over true locals on JSC (agent bench,
-//   5.4 vs 3.9 ns/token): tk/tlen/tc/pos stay uncontextualized locals and
-//   the per-child path is FULLY INLINED — no closure calls per token/line.
+//   5.4 vs 3.9 ns/token): pos stays an uncontextualized local and the
+//   per-child path is FULLY INLINED — no closure calls per token/line.
 // - escLen regex fast path beats charCode loops on JSC (agent bench);
 //   scanString-over-pretty measured slower — do not reintroduce.
 // Token pairs are EXACTLY tokenize(JSON.stringify(...)) minus punct — fuzz-verified.
@@ -63,9 +63,20 @@ interface Frame {
 export function emitJson(
   value: unknown,
   indent: number | '\t',
-  _rawLenHint: number,
+  rawLenHint: number,
 ): EmitResult {
   const pretty = JSON.stringify(value, null, indent) ?? 'null';
+  return emitJsonFromPretty(value, pretty, indent, rawLenHint);
+}
+
+// Walk an already-stringified value. The worker calls this after phase 1, so
+// phase 2 reuses the exact pretty string and does not stringify again.
+export function emitJsonFromPretty(
+  value: unknown,
+  pretty: string,
+  indent: number | '\t',
+  _rawLenHint: number,
+): EmitResult {
   const indLen = typeof indent === 'number' ? indent : 1;
   const plen = pretty.length;
 
@@ -99,10 +110,13 @@ export function emitJson(
     // inline emitLeafVal
     {
       const t = typeof value;
-      let type: number;
+      let type = T_NULL;
       if (t === 'number') {
         const num = value as number;
-        if (Number.isInteger(num) && num < 1e9 && num > -1e9) {
+        if (!Number.isFinite(num)) {
+          pos += 4; // JSON.stringify emits non-finite numbers as null
+          type = T_NULL;
+        } else if (Number.isInteger(num) && num < 1e9 && num > -1e9) {
           // Balanced comparisons avoid the JSC integer-division loop.
           const a = num < 0 ? -num : num;
           let d: number;
@@ -127,7 +141,7 @@ export function emitJson(
           }
           pos = jN;
         }
-        type = T_NUM;
+        if (Number.isFinite(num)) type = T_NUM;
       } else if (t === 'string') {
         pos += escLen(value as string) + 2;
         type = T_STR;
@@ -274,10 +288,13 @@ export function emitJson(
     } else {
       // inline emitLeafVal
       const t = typeof child;
-      let type: number;
+      let type = T_NULL;
       if (t === 'number') {
         const num = child as number;
-        if (Number.isInteger(num) && num < 1e9 && num > -1e9) {
+        if (!Number.isFinite(num)) {
+          pos += 4; // JSON.stringify emits non-finite numbers as null
+          type = T_NULL;
+        } else if (Number.isInteger(num) && num < 1e9 && num > -1e9) {
           // Balanced comparisons avoid the JSC integer-division loop.
           const a = num < 0 ? -num : num;
           let d: number;
@@ -310,7 +327,7 @@ export function emitJson(
             pos = jN;
           }
         }
-        type = T_NUM;
+        if (Number.isFinite(num)) type = T_NUM;
       } else if (t === 'string') {
         if (f.isArr) {
           // JSON.stringify escapes embedded newlines, so the next raw newline

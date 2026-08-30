@@ -50,6 +50,16 @@ body[data-mode=editing] #in {
 }
 body[data-mode=error] #in:focus { border-color: var(--err); }
 body[data-mode=loaded] #in { display: none; }
+/* Phase 1 already owns the formatted output, but its controls and scroll
+   state stay locked until phase 2. Hide only the editor so the output keeps
+   the same body geometry as the hydrated view. */
+body[data-view-state=pending] #in,
+body[data-view-state=provisional] #in { display: none; }
+body[data-view-state=pending] #view,
+body[data-view-state=provisional] #view {
+  overflow: hidden;
+  pointer-events: none;
+}
 
 /* chrome */
 #toolbar {

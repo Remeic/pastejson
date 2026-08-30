@@ -6,6 +6,7 @@ import { flatten, buildVisible } from './tree';
 import { VScroll } from './vscroll';
 import {
   textHtml,
+  provisionalTextHtml,
   treeHtml,
   minHtml,
   minRowCount,
@@ -15,6 +16,17 @@ import { esc } from './highlight';
 import PJWorker from './worker?worker&inline';
 import type { AlignedResult, DiffResult } from './diffview';
 import type { SearchState } from './search';
+import type { FormatReply, Phase1Reply, Phase2Reply } from './worker-protocol';
+import {
+  acceptPhase1,
+  acceptPhase2,
+  beginViewRequest,
+  idleViewState,
+  scanProvisional,
+  type HydratedViewState,
+  type ProvisionalViewState,
+  type WorkerViewState,
+} from './worker-state';
 
 const ROW_H = 20;
 const WORKER_THRESHOLD = 256 * 1024;
@@ -60,11 +72,13 @@ let mode: Mode = 'landing';
 let curView: ViewName = 'text';
 let indent: number | '\t' = 2;
 let reqId = 0;
+let workerView: WorkerViewState = idleViewState(reqId);
 let lastRaw = '';
 let bytesIn = 0;
 let lastFormatMs = 0;
 let wantCopyMin = false;
 let scroller: VScroll | null = null;
+let restoreScrollTop: number | null = null;
 
 // diff island state (module code loads lazily; see openDiff)
 let diffMod: typeof import('./diffview') | null = null;
@@ -394,55 +408,123 @@ async function openSearch(): Promise<void> {
   });
 }
 
-function closeSearch(): void {
+function closeSearch(repaint = true): void {
   if (!searchOpen) return;
   searchOpen = false;
   searchSt = null;
   searchbar.hidden = true;
-  if (curView === 'text' || curView === 'tree') scroller?.repaint();
+  if (repaint && (curView === 'text' || curView === 'tree')) scroller?.repaint();
 }
 
 
 // ---------- worker ----------
 let worker: Worker | null = null;
+
+type TreeReply = {
+  id: number;
+  type: 'tree';
+  rowCount: number;
+  depthBuf: ArrayBuffer;
+  kindBuf: ArrayBuffer;
+  keyIdxBuf: ArrayBuffer;
+  valIdxBuf: ArrayBuffer;
+  metaBuf: ArrayBuffer;
+  subtreeRowsBuf: ArrayBuffer;
+  keys: string[];
+  vals: string[];
+};
+
+type MinReply = { id: number; type: 'min'; min: string; tokMBuf: ArrayBuffer };
+type WorkerErrorReply = {
+  id: number;
+  ok: false;
+  message: string;
+  offset: number;
+  line: number;
+  col: number;
+  lineText: string;
+};
+type WorkerReply = FormatReply | TreeReply | MinReply | WorkerErrorReply;
+
+function provisionalRows(): number {
+  const viewport = viewEl.clientHeight || 800;
+  return Math.max(96, Math.ceil(viewport / ROW_H) + OVERSCAN * 2 + 1);
+}
+
+function mountProvisional(view: ProvisionalViewState): void {
+  scroller?.destroy();
+  viewEl.innerHTML = '';
+  scroller = new VScroll(viewEl, {
+    rowH: ROW_H,
+    overscan: OVERSCAN,
+    paint: (a, b) => provisionalTextHtml(view, a, b),
+  });
+  scroller.setRowCount(view.rows);
+  scroller.host.scrollTop = view.preserveScrollTop;
+  body.dataset.viewState = 'provisional';
+  out.hidden = false;
+  rawprev.hidden = true;
+  toolbar.hidden = false;
+  statusbar.textContent = 'formatting…';
+  setMode('working');
+}
+
+function viewFromHydrated(state: HydratedViewState): ViewModel {
+  return {
+    pretty: state.pretty,
+    min: null,
+    source: undefined,
+    indent: state.indent,
+    lineStarts: state.lineStarts,
+    lines: state.lines,
+    maxLen: state.maxLen,
+    tokP: state.tokP,
+    tokM: null,
+    bytesIn: state.bytesIn,
+    docs: state.docs,
+  };
+}
+
+function hydrate(state: HydratedViewState): void {
+  const previousScrollTop = state.preserveScrollTop;
+  const keepTextScroller = scroller !== null && curView === 'text';
+  vm = viewFromHydrated(state);
+  bytesIn = state.bytesIn;
+  ft = null;
+  expanded = null;
+  visibleRows = null;
+  rawprev.hidden = true;
+  out.hidden = false;
+  toolbar.hidden = false;
+  body.dataset.viewState = 'hydrated';
+  if (curView === 'diff') {
+    curView = 'text';
+    syncSeg('text');
+  }
+
+  if (keepTextScroller && scroller) {
+    // Keep the existing VScroll host and rows. Only the painter and total
+    // height change, so the phase-1 HTML stays visible until the next frame.
+    scroller.setPainter((a, b) => textHtml(vm!, a, b));
+    scroller.setWidth(state.maxLen * charW + 72);
+    scroller.setRowCount(state.lines);
+    scroller.host.scrollTop = previousScrollTop;
+    restoreScrollTop = null;
+    setMode('loaded');
+    fmtStatus(state.ms);
+    return;
+  }
+  restoreScrollTop = previousScrollTop;
+  enterView(state.ms);
+}
+
 function ensureWorker(): Worker {
   if (worker) return worker;
-  worker = new PJWorker();
-  worker.onmessage = (
-    e: MessageEvent<
-      | {
-          id: number;
-          ok: boolean;
-          pretty: string;
-          lines: number;
-          maxLen: number;
-          indent: number | '\t';
-          docs: number;
-          tokPLen: number;
-          lsLen: number;
-          lineStartsBuf: ArrayBuffer;
-          tokPBuf: ArrayBuffer;
-          ms?: number;
-          message?: string;
-          offset?: number;
-        }
-      | {
-          id: number;
-          type: 'tree';
-          rowCount: number;
-          depthBuf: ArrayBuffer;
-          kindBuf: ArrayBuffer;
-          keyIdxBuf: ArrayBuffer;
-          valIdxBuf: ArrayBuffer;
-          metaBuf: ArrayBuffer;
-          subtreeRowsBuf: ArrayBuffer;
-          keys: string[];
-          vals: string[];
-        }
-      | { id: number; type: 'min'; min: string; tokMBuf: ArrayBuffer }
-    >,
-  ) => {
+  const nextWorker = new PJWorker();
+  worker = nextWorker;
+  nextWorker.onmessage = (e: MessageEvent<WorkerReply>) => {
     const m = e.data;
+    if (worker !== nextWorker) return;
     if (m.id !== reqId) return; // stale reply
     if ('type' in m && m.type === 'tree') {
       ft = {
@@ -466,6 +548,10 @@ function ensureWorker(): Worker {
       if (mode === 'loaded' && curView === 'tree' && scroller) {
         fmtTreeStatus();
         scroller.setRowCount(visibleRows.length);
+        if (restoreScrollTop !== null) {
+          scroller.host.scrollTop = restoreScrollTop;
+          restoreScrollTop = null;
+        }
         if (searchSt?.tree && searchOpen) scroller.repaint();
       }
       return;
@@ -482,43 +568,61 @@ function ensureWorker(): Worker {
       if (mode === 'loaded' && curView === 'min') {
         statusbar.textContent = ''; // clear 'preparing minified…'
         mountScroller('min', -1); // now with real row count + tokens
+        if (restoreScrollTop !== null && scroller) {
+          scroller.host.scrollTop = restoreScrollTop;
+          restoreScrollTop = null;
+        }
       }
       return;
     }
-    if (!m.ok) {
+    if ('ok' in m && !m.ok) {
+      workerView = idleViewState(reqId);
       showError(m.message ?? 'Invalid JSON', m.offset ?? -1);
       return;
     }
-    vm = {
-      pretty: m.pretty,
-      min: null,
-      source: undefined, // big path: value lives in the worker
-      indent: m.indent,
-      lineStarts: new Uint32Array(m.lineStartsBuf, 0, m.lsLen),
-      lines: m.lines,
-      maxLen: m.maxLen,
-      tokP: new Int32Array(m.tokPBuf, 0, m.tokPLen),
-      tokM: null,
-      bytesIn,
-      docs: m.docs ?? 0,
-    };
-    ft = null;
-    enterView(m.ms ?? 0);
+    if ('phase' in m && m.phase === 1) {
+      const seed = workerView.phase === 'pending' && workerView.showProvisional
+        ? scanProvisional(m.pretty, provisionalRows())
+        : undefined;
+      const next = acceptPhase1(workerView, m as Phase1Reply, seed);
+      if (next === workerView || next.phase !== 'provisional') return;
+      workerView = next;
+      body.dataset.viewState = 'provisional';
+      if (next.showProvisional && next.mountable) mountProvisional(next);
+      else statusbar.textContent = 'formatting…';
+      return;
+    }
+    if ('phase' in m && m.phase === 2) {
+      const next = acceptPhase2(workerView, m as Phase2Reply);
+      if (next === workerView || next.phase !== 'hydrated') return;
+      workerView = next;
+      hydrate(next);
+    }
   };
-  return worker;
+  nextWorker.onerror = () => {
+    if (worker !== nextWorker) return;
+    nextWorker.terminate();
+    worker = null;
+    restoreScrollTop = null;
+    workerView = idleViewState(reqId);
+    if (mode === 'working') showError('Formatting worker stopped', -1);
+  };
+  return nextWorker;
 }
 
 // ---------- load pipeline ----------
 function load(raw: string): void {
   reqId++;
+  restoreScrollTop = null;
   lastRaw = raw;
   bytesIn = raw.length;
   errbanner.hidden = true;
+  delete body.dataset.viewState;
   rawprev.hidden = true;
   diffRes = null; // new doc invalidates any diff
   alignedRes = null;
   lastBVal = null;
-  closeSearch(); // offsets are doc-scoped — fresh doc, fresh search
+  closeSearch(false); // offsets are doc-scoped — fresh doc, fresh search
   if (panelOpen) dpStatus.textContent = 'doc changed — press Diff';
   if (curView === 'diff') {
     curView = 'text';
@@ -526,22 +630,25 @@ function load(raw: string): void {
   }
 
   if (raw.length > WORKER_THRESHOLD) {
+    const showProvisional = curView === 'text';
+    workerView = beginViewRequest(reqId, 0, showProvisional);
     parsedValue = undefined;
-    vm = null;
-    ft = null;
-    expanded = null;
-    visibleRows = null;
+    // Destroy the old scroller before dropping its DOM. Its backing state
+    // stays valid until hydration so a queued rAF cannot call a null painter.
     scroller?.destroy();
     scroller = null;
     setMode('working');
-    // streaming preview: show raw immediately while worker parses
     out.hidden = false;
-    viewEl.innerHTML = '';
-    rawprev.hidden = false;
-    rawprev.innerHTML =
-      '<span class="working-chip">formatting…</span>' +
-      esc(raw.slice(0, PREVIEW_CHARS).replace(/(.{200})/g, '$1\n')) +
-      '\n…';
+    body.dataset.viewState = 'pending';
+    if (showProvisional) {
+      // streaming preview: show raw immediately while worker parses
+      viewEl.innerHTML = '';
+      rawprev.hidden = false;
+      rawprev.innerHTML =
+        '<span class="working-chip">formatting…</span>' +
+        esc(raw.slice(0, PREVIEW_CHARS).replace(/(.{200})/g, '$1\n')) +
+        '\n…';
+    }
     ensureWorker().postMessage({ type: 'parse', id: reqId, raw, indent });
     return;
   }
@@ -549,14 +656,28 @@ function load(raw: string): void {
   const t0 = performance.now();
   const r = parseInput(raw);
   if (r.kind === 'error') {
+    workerView = idleViewState(reqId);
     showError(r.message, r.offset, r.line, r.col, r.lineText);
     return;
   }
+  workerView = idleViewState(reqId);
   parsedValue = r.value;
   vm = buildView(parsedValue, indent, bytesIn);
   vm.docs = r.kind === 'jsonl' ? r.docs : 0;
   ft = null;
   enterView(performance.now() - t0);
+}
+
+function discardDocumentView(): void {
+  scroller?.destroy();
+  scroller = null;
+  vm = null;
+  ft = null;
+  parsedValue = undefined;
+  expanded = null;
+  visibleRows = null;
+  restoreScrollTop = null;
+  viewEl.innerHTML = '';
 }
 
 function showError(
@@ -566,6 +687,10 @@ function showError(
   col = 0,
   lineText = '',
 ): void {
+  // A retained old document is only valid while a large request is pending.
+  // Drop it before error controls become interactive.
+  discardDocumentView();
+  delete body.dataset.viewState;
   setMode('error');
   out.hidden = true;
   toolbar.hidden = false;
@@ -686,6 +811,7 @@ function mountScroller(v: ViewName, anchorTopVisual: number): void {
 }
 
 function enterView(ms: number): void {
+  body.dataset.viewState = 'hydrated';
   rawprev.hidden = true;
   ft = null; // rebuilt lazily on first tree mount (or reused if same doc+view switch)
   if (curView === 'diff') {
@@ -693,6 +819,10 @@ function enterView(ms: number): void {
     syncSeg('text');
   }
   mountScroller(curView, 0);
+  if (curView === 'text' && restoreScrollTop !== null && scroller) {
+    scroller.host.scrollTop = restoreScrollTop;
+    restoreScrollTop = null;
+  }
   fmtStatus(ms);
 }
 
@@ -799,6 +929,7 @@ toolbar.addEventListener('click', (e) => {
       reqId++;
       wantCopyMin = false;
     }
+    restoreScrollTop = null;
     curView = v;
     syncSeg(v);
     // clear view-scoped chips ('preparing minified…', 'building tree…') —
@@ -851,24 +982,30 @@ $<HTMLSelectElement>('sel-indent').addEventListener('change', (e) => {
   indent = v === 'tab' ? '\t' : Number(v);
   if (!vm) return;
   reqId++;
+  restoreScrollTop = null;
+  workerView = parsedValue === undefined
+    ? beginViewRequest(reqId, scroller?.host.scrollTop ?? 0, false)
+    : idleViewState(reqId);
   closeSearch(); // pretty rebuilt — offsets shifted
+  diffRes = null; // pretty changed — any diff is stale
+  alignedRes = null;
+  lastBVal = null;
+  if (panelOpen) dpStatus.textContent = 'stale — press Diff';
+  if (curView === 'diff') {
+    curView = 'text';
+    syncSeg('text');
+  }
   if (parsedValue !== undefined) {
     const t0 = performance.now();
     vm = buildView(parsedValue, indent, bytesIn);
     ft = null;
-    diffRes = null; // pretty changed — any diff is stale
-    alignedRes = null;
-    lastBVal = null;
-    if (panelOpen) dpStatus.textContent = 'stale — press Diff';
-    if (curView === 'diff') {
-      curView = 'text';
-      syncSeg('text');
-    }
     mountScroller(curView, 0);
     const ms = performance.now() - t0;
     fmtStatus(ms);
     if (curView === 'tree') fmtTreeStatus();
   } else {
+    body.dataset.viewState = 'pending';
+    setMode('working');
     ensureWorker().postMessage({ type: 'reformat', id: reqId, indent });
   }
 });
@@ -892,6 +1029,9 @@ async function copyText(s: string): Promise<void> {
 
 function resetToLanding(): void {
   reqId++;
+  restoreScrollTop = null;
+  workerView = idleViewState(reqId);
+  delete body.dataset.viewState;
   vm = null;
   ft = null;
   parsedValue = undefined;
@@ -997,7 +1137,7 @@ $('btn-search-prev').addEventListener('click', () => {
 $('btn-search-next').addEventListener('click', () => {
   if (searchSt && searchSt.starts.length > 0) gotoMatch(searchSt, searchSt.cur + 1);
 });
-$('btn-search-close').addEventListener('click', closeSearch);
+$('btn-search-close').addEventListener('click', () => closeSearch());
 
 // ---------- clipboard auto-load (best effort, zero main-thread cost) ----------
 // Browser reality:

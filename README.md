@@ -25,11 +25,11 @@ Error messages point at the exact line and column, with the offending snippet hi
 The product *is* the speed. Every design decision competes with milliseconds:
 
 - **Native floor first** — `JSON.parse` + `JSON.stringify` are native C++ and own the heavy lifting; a JS streaming formatter measured 2× slower and was deleted
-- **One fused pass** — the walk emits pretty text, token tables, and the line index together; tokens live in flat `Int32Array` pairs, no string churn
-- **Closure-free hot path** — captured-scope writes measured ~40% slower than true locals, so the per-child walk is fully inlined with branch-free, capacity-proven token pushes
+- **One fused pass** — large documents send the exact native pretty source in phase 1, then walk the parsed value once in phase 2 to build the full line index and global non-punctuation token table used by Text and Find
+- **Closure-free hot path** — captured-scope writes measured ~40% slower than true locals, so the per-child walk stays fully inlined
 - **Lazy everything else** — tree, minified form, diff, and search load/build only when asked; each is a dynamic-import island that costs zero until used (search: ~2 ms per query on 5 MB, regex included)
 - **Worker above 256 KB** — parse + format happen off the main thread with zero-copy buffer transfer
-- **Benchmarked, not vibes** — `bun run bench` gates the 5 MB paste pipeline (~21 ms, min-of-7) on every change; fuzz tests prove byte-exact output against `JSON.stringify`
+- **Benchmarked, not vibes** — `bun run bench` gates the 5 MB paste compute path on every change and reports compute-ready slices; it does not measure browser first paint or full-ready. Fuzz tests prove byte-exact output against `JSON.stringify`
 
 ## Development
 
