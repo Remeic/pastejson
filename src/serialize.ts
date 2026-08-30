@@ -1,29 +1,19 @@
 // Fused JSON view-model builder — v6 (closure-free hot path).
-// Text from NATIVE JSON.stringify; zero-string length walk emits tokens +
-// line index. TREE IS LAZY: flatten() rebuilds it on demand (first Tree
-// open / worker getTree) — the paste→text path never pays for tree columns.
+// Text from NATIVE JSON.stringify; zero-string length walk emits the line
+// index. TREE and Text tokens are lazy: flatten() rebuilds the tree on demand
+// and the Text painter tokenizes only its visible window.
 //
 // Measured invariants (see AGENTS.md "The floor" + bench):
 // - stringify (native) + parse (native) are the floor; the JS walk is the
 //   only optimizable slice.
 // - Captured-scope writes cost ~40% over true locals on JSC (agent bench,
-//   5.4 vs 3.9 ns/token): tk/tlen/tc/pos stay uncontextualized locals and
-//   the per-child path is FULLY INLINED — no closure calls per token/line.
+//   5.4 vs 3.9 ns/token): pos stays an uncontextualized local and the
+//   per-child path is FULLY INLINED — no closure calls per token/line.
 // - escLen regex fast path beats charCode loops on JSC (agent bench);
 //   scanString-over-pretty measured slower — do not reintroduce.
 // Token pairs are EXACTLY tokenize(JSON.stringify(...)) minus punct — fuzz-verified.
-import {
-  T_FALSE,
-  T_KEY,
-  T_NULL,
-  T_NUM,
-  T_STR,
-  T_TRUE,
-} from './tokenizer';
-
 export interface EmitResult {
   pretty: string;
-  tokens: Int32Array;
   lineStarts: Uint32Array;
   lines: number;
   maxLen: number;
@@ -72,13 +62,6 @@ export function emitJson(
   // ---- hot registers (true locals — never captured by closures) ----
   let pos = 0;
 
-  // tokens — seed from pretty length (known now): 2 ints per token, and
-  // every token except the last is followed by >=1 non-token char, so
-  // token ints <= plen+2. Branch-free pushes (agent bench: 3.1 vs 4.0 ns).
-  const tc = plen + 16;
-  let tlen = 0;
-  const tk: Int32Array<ArrayBuffer> = new Int32Array(tc);
-
   // line index
   // lines: each line except the last is >=2 chars (content + '\n') —
   // capacity proven, no growth; llen IS the line count
@@ -99,7 +82,6 @@ export function emitJson(
     // inline emitLeafVal
     {
       const t = typeof value;
-      let type: number;
       if (t === 'number') {
         const num = value as number;
         if (Number.isInteger(num) && num < 1e9 && num > -1e9) {
@@ -127,19 +109,13 @@ export function emitJson(
           }
           pos = jN;
         }
-        type = T_NUM;
       } else if (t === 'string') {
         pos += escLen(value as string) + 2;
-        type = T_STR;
       } else if (t === 'boolean') {
         pos += value ? 4 : 5;
-        type = value ? T_TRUE : T_FALSE;
       } else {
         pos += 4;
-        type = T_NULL;
       }
-      tk[tlen++] = pos;
-      tk[tlen++] = type;
     }
     {
       const seg = pos - lineStart;
@@ -231,8 +207,6 @@ export function emitJson(
       const k = (f.keysList as string[])[f.idx];
       child = (f.obj as Record<string, unknown>)[k];
       pos += escLen(k) + 2; // quoted key
-      tk[tlen++] = pos;
-      tk[tlen++] = T_KEY;
       pos += 2; // '": '
     }
     f.idx++;
@@ -274,7 +248,6 @@ export function emitJson(
     } else {
       // inline emitLeafVal
       const t = typeof child;
-      let type: number;
       if (t === 'number') {
         const num = child as number;
         if (Number.isInteger(num) && num < 1e9 && num > -1e9) {
@@ -310,7 +283,6 @@ export function emitJson(
             pos = jN;
           }
         }
-        type = T_NUM;
       } else if (t === 'string') {
         if (f.isArr) {
           // JSON.stringify escapes embedded newlines, so the next raw newline
@@ -322,16 +294,11 @@ export function emitJson(
         } else {
           pos += escLen(child as string) + 2;
         }
-        type = T_STR;
       } else if (t === 'boolean') {
         pos += child ? 4 : 5;
-        type = child ? T_TRUE : T_FALSE;
       } else {
         pos += 4;
-        type = T_NULL;
       }
-      tk[tlen++] = pos;
-      tk[tlen++] = type;
     }
   }
 
@@ -344,7 +311,6 @@ export function emitJson(
   function finish(): EmitResult {
     return {
       pretty,
-      tokens: tk.subarray(0, tlen),
       lineStarts: ls.subarray(0, llen),
       lines: llen,
       maxLen,

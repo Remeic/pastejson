@@ -3,7 +3,7 @@ import { parseInput } from './parse';
 import { flatten, type FlatTree } from './tree';
 
 // Worker path for big payloads (>256KB).
-// - parse + fused serialize (pretty/tokens/lines) happen here
+// - parse + fused serialize (pretty/lines) happen here
 // - buffers transfer back zero-copy
 // - parsed value cached here; tree built on demand via flatten (getTree)
 
@@ -45,13 +45,10 @@ function replyVM(id: number, vm: ViewModel, ms: number): void {
       indent: vm.indent,
       ms,
       docs: cachedDocs,
-      // buffers are seed-sized; views are subarrays — lengths travel explicitly
-      tokPLen: vm.tokP.length,
       lsLen: vm.lineStarts.length,
       lineStartsBuf: vm.lineStarts.buffer,
-      tokPBuf: vm.tokP.buffer,
     },
-    [vm.lineStarts.buffer, vm.tokP.buffer] as unknown as Transferable[],
+    [vm.lineStarts.buffer] as unknown as Transferable[],
   );
 }
 

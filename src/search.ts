@@ -17,6 +17,7 @@
 
 import { esc, rangeHtml } from './highlight';
 import { valCls } from './render';
+import { tokenizeWindow } from './tokenizer';
 import type { FlatTree } from './tree';
 import type { ViewModel } from './viewmodel';
 
@@ -295,12 +296,13 @@ export function rowHtml(
 ): string {
   const P = vm.pretty;
   const LS = vm.lineStarts;
-  const TOK = vm.tokP;
   const L = vm.lines;
   const S = st.starts;
   const E = st.ends;
   const nm = S.length;
   const last = Math.min(first + count, L);
+  if (first >= last) return '';
+  const TOK = tokenizeWindow(P, LS[first], last < L ? LS[last] - 1 : P.length);
   let h = '';
   for (let i = first; i < last; i++) {
     const s = LS[i];

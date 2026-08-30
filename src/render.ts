@@ -2,6 +2,7 @@
 // Called only for the visible window by VScroll.
 import type { ViewModel } from './viewmodel';
 import { rangeHtml, esc } from './highlight';
+import { tokenizeWindow } from './tokenizer';
 import type { FlatTree } from './tree';
 
 export const MIN_CHUNK = 600;
@@ -9,9 +10,10 @@ export const MIN_CHUNK = 600;
 export function textHtml(vm: ViewModel, first: number, count: number): string {
   const P = vm.pretty;
   const LS = vm.lineStarts;
-  const TOK = vm.tokP;
   const L = vm.lines;
   const last = Math.min(first + count, L);
+  if (first >= last) return '';
+  const TOK = tokenizeWindow(P, LS[first], last < L ? LS[last] - 1 : P.length);
   let h = '';
   for (let i = first; i < last; i++) {
     const s = LS[i];

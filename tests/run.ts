@@ -129,14 +129,14 @@ ok('emitJson matches stringify for escaped values and tokens', () => {
   for (let i = 0; i < toks.length; i += 2) {
     if (toks[i + 1] !== T_PUNCT) ref.push(toks[i], toks[i + 1]);
   }
-  assert.deepStrictEqual([...r.tokens], ref);
+  assert.deepStrictEqual([...tokenizeWindow(r.pretty, 0, r.pretty.length)], ref);
 });
 
 ok('emitJson handles one-line roots', () => {
   const scalar = emitJson(1, 2, 8);
   assert.strictEqual(scalar.pretty, '1');
   assert.strictEqual(scalar.lines, 1);
-  assert.deepStrictEqual([...scalar.tokens], [1, T_NUM]);
+  assert.deepStrictEqual([...tokenizeWindow(scalar.pretty, 0, scalar.pretty.length)], [1, T_NUM]);
 });
 
 ok('emitJson numeric fast paths keep exact token ends', () => {
@@ -149,16 +149,19 @@ ok('emitJson numeric fast paths keep exact token ends', () => {
 
   for (const value of values) {
     const root = emitJson(value, 2, 16);
-    assert.deepStrictEqual([...root.tokens], [root.pretty.length, T_NUM]);
+    assert.deepStrictEqual([...tokenizeWindow(root.pretty, 0, root.pretty.length)], [root.pretty.length, T_NUM]);
   }
 
   const nested = emitJson(values, 2, 256);
   const expected = tokenize(nested.pretty);
-  const numberTokens: number[] = [];
+  const ref: number[] = [];
   for (let i = 0; i < expected.length; i += 2) {
-    if (expected[i + 1] === T_NUM) numberTokens.push(expected[i], expected[i + 1]);
+    if (expected[i + 1] !== T_PUNCT) ref.push(expected[i], expected[i + 1]);
   }
-  assert.deepStrictEqual([...nested.tokens], numberTokens);
+  assert.deepStrictEqual(
+    [...tokenizeWindow(nested.pretty, 0, nested.pretty.length)],
+    ref,
+  );
 });
 
 // ---------- tree flatten ----------
@@ -227,7 +230,7 @@ ok('rangeHtml wraps token classes + escapes html', () => {
   assert.ok(r.ok);
   if (!r.ok) return;
   const vm = buildView(r.value, 2, src.length);
-  const html = rangeHtml(vm.pretty, vm.tokP, 0, Math.min(40, vm.pretty.length));
+  const html = rangeHtml(vm.pretty, tokenizeWindow(vm.pretty, 0, vm.pretty.length), 0, Math.min(40, vm.pretty.length));
   assert.ok(html.includes('<i class=k>') || html.includes('<i class=s>'));
   assert.ok(html.includes('&lt;')); // escaped
   assert.ok(!html.includes('<b')); // raw < never leaks unescaped as tag
@@ -527,6 +530,104 @@ ok('aligned: seeded fuzz pair invariants', () => {
 });
 
 // ---------- painters (lazy island views) ----------
+function globalSyntaxTokens(src: string): Int32Array {
+  const all = tokenize(src);
+  const kept: number[] = [];
+  for (let i = 0; i < all.length; i += 2) {
+    if (all[i + 1] !== T_PUNCT) kept.push(all[i], all[i + 1]);
+  }
+  return Int32Array.from(kept);
+}
+
+function oldTextHtml(vm: ReturnType<typeof buildView>, first: number, count: number): string {
+  const P = vm.pretty;
+  const LS = vm.lineStarts;
+  const TOK = globalSyntaxTokens(P);
+  const last = Math.min(first + count, vm.lines);
+  let h = '';
+  for (let i = first; i < last; i++) {
+    const s = LS[i];
+    const e = i + 1 < vm.lines ? LS[i + 1] - 1 : P.length;
+    h += `<div class="row"><span class="ln">${i + 1}</span><code>${rangeHtml(P, TOK, s, e)}</code></div>`;
+  }
+  return h;
+}
+
+function oldFirstEndAfter(ends: Int32Array, x: number): number {
+  let lo = 0;
+  let hi = ends.length;
+  while (lo < hi) {
+    const m = (lo + hi) >> 1;
+    if (ends[m] <= x) lo = m + 1;
+    else hi = m;
+  }
+  return lo;
+}
+
+function oldSearchHtml(
+  vm: ReturnType<typeof buildView>,
+  st: ReturnType<typeof findAll>,
+  first: number,
+  count: number,
+): string {
+  const P = vm.pretty;
+  const LS = vm.lineStarts;
+  const TOK = globalSyntaxTokens(P);
+  const S = st.starts;
+  const E = st.ends;
+  const last = Math.min(first + count, vm.lines);
+  let h = '';
+  for (let i = first; i < last; i++) {
+    const s = LS[i];
+    const e = i + 1 < vm.lines ? LS[i + 1] - 1 : P.length;
+    let k = oldFirstEndAfter(E, s);
+    if (k >= S.length || S[k] >= e) {
+      h += `<div class="row"><span class="ln">${i + 1}</span><code>${rangeHtml(P, TOK, s, e)}</code></div>`;
+      continue;
+    }
+    let c = s;
+    let body = '';
+    while (k < S.length && S[k] < e && c < e) {
+      const me = Math.min(E[k], e);
+      const ms = S[k] > c ? S[k] : c;
+      if (S[k] > c) body += rangeHtml(P, TOK, c, S[k]);
+      if (me > ms) {
+        body += `<mark class="${k === st.cur ? 'mc' : 'm'}">${P.slice(ms, me).replace(/[&<>]/g, (c) => c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;')}</mark>`;
+        c = me;
+      }
+      k++;
+    }
+    if (c < e) body += rangeHtml(P, TOK, c, e);
+    h += `<div class="row"><span class="ln">${i + 1}</span><code>${body}</code></div>`;
+  }
+  return h;
+}
+
+ok('painters: local windows equal the global-token renderer', () => {
+  const value = {
+    first: 'quote"\\\nvalue <tag>',
+    items: Array.from({ length: 80 }, (_, i) => ({ id: i, text: i % 3 === 0 ? 'escaped \\ value' : 'plain' })),
+    deep: [[[[[[{ final: 'tail' }]]]]]],
+    last: '<last>',
+  };
+  const vm = buildView(value, 2, 100);
+  const windows = [
+    [0, 4],
+    [Math.floor(vm.lines / 2), 7],
+    [vm.lines - 6, 6],
+  ];
+  for (const [first, count] of windows) {
+    assert.strictEqual(textHtml(vm, first, count), oldTextHtml(vm, first, count), `window ${first}:${count}`);
+  }
+});
+
+ok('painters: deep closing-container windows keep token boundaries exact', () => {
+  const value = { outer: [[[[[[{ escaped: 'a"\\\nb' }]]]]]], after: 'after' };
+  const vm = buildView(value, 2, 100);
+  const first = vm.lines - 8;
+  assert.strictEqual(textHtml(vm, first, 8), oldTextHtml(vm, first, 8));
+});
+
 ok('painters: treeHtml renders flatten output end-to-end', () => {
   // regression guard: the valIdx drift crash surfaced here first (valCls(undefined))
   const ft = flatten({ a: 1, b: [2, 'x'], c: { d: null } });
@@ -659,6 +760,15 @@ ok('search: rowHtml zero matches ≡ textHtml byte-for-byte', () => {
   const vm = buildView({ a: [1, '<x>'], b: null }, 2, 40);
   const st = findAll(vm, 'qqq', CI);
   assert.deepStrictEqual(rowHtml(vm, st, 0, vm.lines), textHtml(vm, 0, vm.lines));
+});
+
+ok('search: local zero-hit and cross-line windows equal global-token output', () => {
+  const vm = buildView({ a: 1, b: 2, c: 'escaped <value>' }, 2, 40);
+  const miss = findAll(vm, 'not-present', CI);
+  assert.strictEqual(rowHtml(vm, miss, 0, vm.lines), oldSearchHtml(vm, miss, 0, vm.lines));
+  const cross = findAll(vm, '1,\n  "b"', CI);
+  assert.strictEqual(cross.starts.length, 1);
+  assert.strictEqual(rowHtml(vm, cross, 0, vm.lines), oldSearchHtml(vm, cross, 0, vm.lines));
 });
 
 ok('search: rowHtml marks, current match class, escapes inside marks', () => {

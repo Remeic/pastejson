@@ -195,7 +195,8 @@ export function tokenizeWindow(src: string, start: number, end: number): Int32Ar
   let out = new Int32Array(cap);
 
   let i = start;
-  while (i < limit) {
+  let done = false;
+  while (i < n && !done) {
     const c = src.charCodeAt(i);
     const cls = c < 128 ? CLS[c] : 0;
     let tokEnd = -1;
@@ -304,6 +305,11 @@ export function tokenizeWindow(src: string, start: number, end: number): Int32Ar
       }
       out[len++] = tokEnd;
       out[len++] = tokType;
+      // The next non-punctuation token owns the gap after the preceding
+      // token. Continue through whitespace/punctuation after the requested
+      // end and stop only after that owner is known. This is unbounded by
+      // design: nested closing-container runs can be arbitrarily deep.
+      if (i >= limit) done = true;
     }
   }
 
