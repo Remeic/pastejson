@@ -5,7 +5,7 @@
 // A hydrated view is created only after phase 2 supplies the complete indexes.
 // This module has no DOM or Worker dependency so request races stay testable.
 
-import type { Indent, Phase1Reply, Phase2Reply, RequestMetadata } from './worker-protocol';
+import type { Indent, Phase1Reply, Phase2Reply } from './worker-protocol';
 
 export interface ProvisionalSeed {
   prefixLineStarts: Uint32Array;
@@ -15,18 +15,18 @@ export interface ProvisionalSeed {
 
 export interface IdleViewState {
   phase: 'idle';
-  request: RequestMetadata;
+  id: number;
 }
 
 export interface PendingViewState {
   phase: 'pending';
-  request: RequestMetadata;
+  id: number;
   preserveScrollTop: number;
 }
 
 export interface ProvisionalViewState {
   phase: 'provisional';
-  request: RequestMetadata;
+  id: number;
   pretty: string;
   indent: Indent;
   bytesIn: number;
@@ -40,7 +40,7 @@ export interface ProvisionalViewState {
 
 export interface HydratedViewState {
   phase: 'hydrated';
-  request: RequestMetadata;
+  id: number;
   pretty: string;
   indent: Indent;
   bytesIn: number;
@@ -58,10 +58,6 @@ export type WorkerViewState =
   | PendingViewState
   | ProvisionalViewState
   | HydratedViewState;
-
-function sameRequest(a: RequestMetadata, b: RequestMetadata): boolean {
-  return a.id === b.id && a.epoch === b.epoch;
-}
 
 function validSeed(pretty: string, seed: ProvisionalSeed): boolean {
   if (seed.rows < 1 || seed.rows !== seed.prefixLineStarts.length) return false;
@@ -101,18 +97,17 @@ export function scanProvisional(pretty: string, maxRows: number): ProvisionalSee
   };
 }
 
-export function idleViewState(id: number, epoch: number): IdleViewState {
-  return { phase: 'idle', request: { id, epoch } };
+export function idleViewState(id: number): IdleViewState {
+  return { phase: 'idle', id };
 }
 
 export function beginViewRequest(
   id: number,
-  epoch: number,
   preserveScrollTop = 0,
 ): PendingViewState {
   return {
     phase: 'pending',
-    request: { id, epoch },
+    id,
     preserveScrollTop: Math.max(0, preserveScrollTop),
   };
 }
@@ -122,11 +117,11 @@ export function acceptPhase1(
   reply: Phase1Reply,
   seed: ProvisionalSeed,
 ): WorkerViewState {
-  if (state.phase !== 'pending' || !sameRequest(state.request, reply)) return state;
+  if (state.phase !== 'pending' || state.id !== reply.id) return state;
   if (!validSeed(reply.pretty, seed)) return state;
   return {
     phase: 'provisional',
-    request: state.request,
+    id: state.id,
     pretty: reply.pretty,
     indent: reply.indent,
     bytesIn: reply.bytesIn,
@@ -143,7 +138,7 @@ export function acceptPhase2(
   state: WorkerViewState,
   reply: Phase2Reply,
 ): WorkerViewState {
-  if (state.phase !== 'provisional' || !sameRequest(state.request, reply)) return state;
+  if (state.phase !== 'provisional' || state.id !== reply.id) return state;
   if (
     reply.indent !== state.indent ||
     reply.bytesIn !== state.bytesIn ||
@@ -154,7 +149,7 @@ export function acceptPhase2(
   }
   return {
     phase: 'hydrated',
-    request: state.request,
+    id: state.id,
     pretty: state.pretty,
     indent: state.indent,
     bytesIn: state.bytesIn,
@@ -166,12 +161,4 @@ export function acceptPhase2(
     maxLen: reply.maxLen,
     tokP: new Int32Array(reply.tokPBuf, 0, reply.tokPLen),
   };
-}
-
-export function resetViewState(id: number, epoch: number): IdleViewState {
-  return idleViewState(id, epoch);
-}
-
-export function restartViewState(id: number, epoch: number): IdleViewState {
-  return idleViewState(id, epoch);
 }

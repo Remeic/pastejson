@@ -63,7 +63,7 @@ for (let run = 0; run < 7; run++) {
   const seed = scanProvisional(pretty, 80);
   const provisional: ProvisionalViewState = {
     phase: 'provisional',
-    request: { id: run, epoch: 1 },
+    id: run,
     pretty,
     indent: 2,
     bytesIn: raw.length,

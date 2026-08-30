@@ -8,7 +8,6 @@ export type Indent = number | '\t';
 
 export interface RequestMetadata {
   id: number;
-  epoch: number;
 }
 
 export type FormatRequest =
@@ -40,68 +39,3 @@ export interface Phase2Reply extends RequestMetadata {
 }
 
 export type FormatReply = Phase1Reply | Phase2Reply;
-
-// Keep these lists beside the constructors. The worker must use the
-// constructors so structured-clone sees one fixed key order per phase.
-export const PHASE1_KEYS = [
-  'id',
-  'epoch',
-  'ok',
-  'phase',
-  'pretty',
-  'indent',
-  'bytesIn',
-  'docs',
-  'ms',
-] as const;
-
-export const PHASE2_KEYS = [
-  'id',
-  'epoch',
-  'ok',
-  'phase',
-  'lines',
-  'maxLen',
-  'indent',
-  'bytesIn',
-  'docs',
-  'lsLen',
-  'lineStartsBuf',
-  'tokPLen',
-  'tokPBuf',
-] as const;
-
-export type Phase1ReplyInput = Omit<Phase1Reply, 'ok' | 'phase'>;
-export type Phase2ReplyInput = Omit<Phase2Reply, 'ok' | 'phase'>;
-
-export function makePhase1Reply(input: Phase1ReplyInput): Phase1Reply {
-  return {
-    id: input.id,
-    epoch: input.epoch,
-    ok: true,
-    phase: 1,
-    pretty: input.pretty,
-    indent: input.indent,
-    bytesIn: input.bytesIn,
-    docs: input.docs,
-    ms: input.ms,
-  };
-}
-
-export function makePhase2Reply(input: Phase2ReplyInput): Phase2Reply {
-  return {
-    id: input.id,
-    epoch: input.epoch,
-    ok: true,
-    phase: 2,
-    lines: input.lines,
-    maxLen: input.maxLen,
-    indent: input.indent,
-    bytesIn: input.bytesIn,
-    docs: input.docs,
-    lsLen: input.lsLen,
-    lineStartsBuf: input.lineStartsBuf,
-    tokPLen: input.tokPLen,
-    tokPBuf: input.tokPBuf,
-  };
-}

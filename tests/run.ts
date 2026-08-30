@@ -20,17 +20,25 @@ import {
   type TreeHits,
 } from '../src/search';
 import {
-  PHASE1_KEYS,
-  PHASE2_KEYS,
-  makePhase1Reply,
-  makePhase2Reply,
+  type Phase1Reply,
+  type Phase2Reply,
 } from '../src/worker-protocol';
+const PHASE1_KEYS = ['id', 'ok', 'phase', 'pretty', 'indent', 'bytesIn', 'docs', 'ms'];
+const PHASE2_KEYS = [
+  'id', 'ok', 'phase', 'lines', 'maxLen', 'indent', 'bytesIn', 'docs', 'lsLen',
+  'lineStartsBuf', 'tokPLen', 'tokPBuf',
+];
+function makePhase1Reply(input: Omit<Phase1Reply, 'ok' | 'phase'>): Phase1Reply {
+  return { id: input.id, ok: true, phase: 1, pretty: input.pretty, indent: input.indent, bytesIn: input.bytesIn, docs: input.docs, ms: input.ms };
+}
+function makePhase2Reply(input: Omit<Phase2Reply, 'ok' | 'phase'>): Phase2Reply {
+  return { id: input.id, ok: true, phase: 2, lines: input.lines, maxLen: input.maxLen, indent: input.indent, bytesIn: input.bytesIn, docs: input.docs, lsLen: input.lsLen, lineStartsBuf: input.lineStartsBuf, tokPLen: input.tokPLen, tokPBuf: input.tokPBuf };
+}
 import {
   acceptPhase1,
   acceptPhase2,
   beginViewRequest,
-  resetViewState,
-  restartViewState,
+  idleViewState,
   scanProvisional,
   type ProvisionalSeed,
   type WorkerViewState,
@@ -60,7 +68,6 @@ function phase2Buffers(): { lineStartsBuf: ArrayBuffer; tokPBuf: ArrayBuffer } {
 ok('two-phase protocol: fixed shapes keep pretty only in phase 1', () => {
   const p1 = makePhase1Reply({
     id: 4,
-    epoch: 2,
     pretty: '{\n  "a": 1\n}',
     indent: 2,
     bytesIn: 9,
@@ -74,7 +81,6 @@ ok('two-phase protocol: fixed shapes keep pretty only in phase 1', () => {
   const buffers = phase2Buffers();
   const p2 = makePhase2Reply({
     id: 4,
-    epoch: 2,
     lines: 3,
     maxLen: 8,
     indent: 2,
@@ -92,14 +98,13 @@ ok('two-phase protocol: fixed shapes keep pretty only in phase 1', () => {
 ok('two-phase state: phase 1 becomes hydrated only after matching phase 2', () => {
   const p1 = makePhase1Reply({
     id: 10,
-    epoch: 1,
     pretty: 'x\ny\nz',
     indent: 2,
     bytesIn: 5,
     docs: 0,
     ms: 2,
   });
-  let state: WorkerViewState = beginViewRequest(10, 1);
+  let state: WorkerViewState = beginViewRequest(10);
   state = acceptPhase1(state, p1, {
     prefixLineStarts: new Uint32Array([0, 2]),
     rows: 2,
@@ -114,7 +119,6 @@ ok('two-phase state: phase 1 becomes hydrated only after matching phase 2', () =
   const buffers = phase2Buffers();
   const p2 = makePhase2Reply({
     id: 10,
-    epoch: 1,
     lines: 3,
     maxLen: 8,
     indent: 2,
@@ -133,11 +137,10 @@ ok('two-phase state: phase 1 becomes hydrated only after matching phase 2', () =
 });
 
 ok('two-phase state: phase 2 without matching phase 1 is ignored', () => {
-  const state: WorkerViewState = beginViewRequest(11, 1);
+  const state: WorkerViewState = beginViewRequest(11);
   const buffers = phase2Buffers();
   const reply = makePhase2Reply({
     id: 11,
-    epoch: 1,
     lines: 3,
     maxLen: 8,
     indent: 2,
@@ -153,20 +156,18 @@ ok('two-phase state: phase 2 without matching phase 1 is ignored', () => {
 ok('two-phase state: stale phase 1 and phase 2 cannot replace a newer request', () => {
   const oldP1 = makePhase1Reply({
     id: 20,
-    epoch: 1,
     pretty: 'old',
     indent: 2,
     bytesIn: 3,
     docs: 0,
     ms: 1,
   });
-  let state: WorkerViewState = beginViewRequest(20, 1);
-  state = beginViewRequest(21, 1);
+  let state: WorkerViewState = beginViewRequest(20);
+  state = beginViewRequest(21);
   assert.strictEqual(acceptPhase1(state, oldP1, phaseSeed), state);
 
   const newerP1 = makePhase1Reply({
     id: 21,
-    epoch: 1,
     pretty: 'new',
     indent: 2,
     bytesIn: 3,
@@ -182,7 +183,6 @@ ok('two-phase state: stale phase 1 and phase 2 cannot replace a newer request', 
   const oldBuffers = phase2Buffers();
   const oldP2 = makePhase2Reply({
     id: 20,
-    epoch: 1,
     lines: 3,
     maxLen: 8,
     indent: 2,
@@ -198,7 +198,6 @@ ok('two-phase state: stale phase 1 and phase 2 cannot replace a newer request', 
 ok('two-phase state: paste A then B drops both stale A phases', () => {
   const a1 = makePhase1Reply({
     id: 50,
-    epoch: 1,
     pretty: 'A',
     indent: 2,
     bytesIn: 1,
@@ -206,16 +205,15 @@ ok('two-phase state: paste A then B drops both stale A phases', () => {
     ms: 1,
   });
   let state: WorkerViewState = acceptPhase1(
-    beginViewRequest(50, 1),
+    beginViewRequest(50),
     a1,
     { prefixLineStarts: new Uint32Array([0]), rows: 1, lastRowEnd: 1 },
   );
   assert.strictEqual(state.phase, 'provisional');
-  state = beginViewRequest(51, 1);
+  state = beginViewRequest(51);
   assert.strictEqual(acceptPhase1(state, a1, phaseSeed), state);
   const a2 = makePhase2Reply({
     id: 50,
-    epoch: 1,
     lines: 1,
     maxLen: 1,
     indent: 2,
@@ -230,7 +228,6 @@ ok('two-phase state: paste A then B drops both stale A phases', () => {
 
   const b1 = makePhase1Reply({
     id: 51,
-    epoch: 1,
     pretty: 'B',
     indent: 2,
     bytesIn: 1,
@@ -250,23 +247,21 @@ ok('two-phase state: paste A then B drops both stale A phases', () => {
 ok('two-phase state: a reformat race accepts only the new indent', () => {
   const oldP1 = makePhase1Reply({
     id: 60,
-    epoch: 1,
     pretty: '{\n  "a": 1\n}',
     indent: 2,
     bytesIn: 7,
     docs: 0,
     ms: 1,
   });
-  let state: WorkerViewState = acceptPhase1(beginViewRequest(60, 1), oldP1, {
+  let state: WorkerViewState = acceptPhase1(beginViewRequest(60), oldP1, {
     prefixLineStarts: new Uint32Array([0, 2]),
     rows: 2,
     lastRowEnd: 11,
   });
   assert.strictEqual(state.phase, 'provisional');
-  state = beginViewRequest(61, 1);
+  state = beginViewRequest(61);
   const oldP2 = makePhase2Reply({
     id: 60,
-    epoch: 1,
     lines: 3,
     maxLen: 8,
     indent: 2,
@@ -280,7 +275,6 @@ ok('two-phase state: a reformat race accepts only the new indent', () => {
 
   const newP1 = makePhase1Reply({
     id: 61,
-    epoch: 1,
     pretty: '{\n    "a": 1\n}',
     indent: 4,
     bytesIn: 7,
@@ -301,7 +295,6 @@ ok('two-phase state: a reformat race accepts only the new indent', () => {
 ok('two-phase state: reformat preserves the captured scroll position', () => {
   const p1 = makePhase1Reply({
     id: 62,
-    epoch: 1,
     pretty: '{\n  "a": 1\n}',
     indent: 2,
     bytesIn: 7,
@@ -309,7 +302,7 @@ ok('two-phase state: reformat preserves the captured scroll position', () => {
     ms: 1,
   });
   let state: WorkerViewState = acceptPhase1(
-    beginViewRequest(62, 1, 640),
+    beginViewRequest(62, 640),
     p1,
     { prefixLineStarts: new Uint32Array([0, 2]), rows: 2, lastRowEnd: 11 },
   );
@@ -318,7 +311,6 @@ ok('two-phase state: reformat preserves the captured scroll position', () => {
   assert.strictEqual(state.preserveScrollTop, 640);
   const p2 = makePhase2Reply({
     id: 62,
-    epoch: 1,
     lines: 3,
     maxLen: 8,
     indent: 2,
@@ -337,18 +329,16 @@ ok('two-phase state: reformat preserves the captured scroll position', () => {
 ok('two-phase state: reset and worker restart reject old replies', () => {
   const p1 = makePhase1Reply({
     id: 30,
-    epoch: 1,
     pretty: 'old',
     indent: 2,
     bytesIn: 3,
     docs: 0,
     ms: 1,
   });
-  const reset = resetViewState(31, 1);
+  const reset = idleViewState(31);
   assert.strictEqual(acceptPhase1(reset, p1, phaseSeed), reset);
   const resetP2 = makePhase2Reply({
     id: 30,
-    epoch: 1,
     lines: 3,
     maxLen: 8,
     indent: 2,
@@ -360,9 +350,9 @@ ok('two-phase state: reset and worker restart reject old replies', () => {
   });
   assert.strictEqual(acceptPhase2(reset, resetP2), reset);
 
-  let restarted: WorkerViewState = acceptPhase1(beginViewRequest(30, 2), p1, phaseSeed);
+  let restarted: WorkerViewState = acceptPhase1(beginViewRequest(30), p1, phaseSeed);
   assert.strictEqual(restarted.phase, 'pending');
-  restarted = restartViewState(30, 3);
+  restarted = idleViewState(30);
   assert.strictEqual(acceptPhase1(restarted, p1, phaseSeed), restarted);
   assert.strictEqual(acceptPhase2(restarted, resetP2), restarted);
 });
@@ -370,7 +360,6 @@ ok('two-phase state: reset and worker restart reject old replies', () => {
 ok('two-phase state: null and JSONL metadata remain explicit', () => {
   const nullReply = makePhase1Reply({
     id: 35,
-    epoch: 1,
     pretty: 'null',
     indent: 2,
     bytesIn: 4,
@@ -378,7 +367,7 @@ ok('two-phase state: null and JSONL metadata remain explicit', () => {
     ms: 1,
   });
   let state: WorkerViewState = acceptPhase1(
-    beginViewRequest(35, 1),
+    beginViewRequest(35),
     nullReply,
     scanProvisional(nullReply.pretty, 8),
   );
@@ -389,7 +378,6 @@ ok('two-phase state: null and JSONL metadata remain explicit', () => {
 
   const jsonlReply = makePhase1Reply({
     id: 36,
-    epoch: 1,
     pretty: '[\n  1,\n  2\n]',
     indent: 2,
     bytesIn: 7,
@@ -397,7 +385,7 @@ ok('two-phase state: null and JSONL metadata remain explicit', () => {
     ms: 1,
   });
   state = acceptPhase1(
-    beginViewRequest(36, 1),
+    beginViewRequest(36),
     jsonlReply,
     scanProvisional(jsonlReply.pretty, 8),
   );
@@ -412,7 +400,6 @@ ok('two-phase provisional scan and painter use only the visible prefix', () => {
   const full = buildView(value, 2, 100);
   const p1 = makePhase1Reply({
     id: 40,
-    epoch: 1,
     pretty: full.pretty,
     indent: 2,
     bytesIn: 100,
@@ -420,7 +407,7 @@ ok('two-phase provisional scan and painter use only the visible prefix', () => {
     ms: 3,
   });
   const seed = scanProvisional(full.pretty, 6);
-  let state: WorkerViewState = acceptPhase1(beginViewRequest(40, 1), p1, seed);
+  let state: WorkerViewState = acceptPhase1(beginViewRequest(40), p1, seed);
   assert.strictEqual(state.phase, 'provisional');
   if (state.phase !== 'provisional') return;
   assert.deepStrictEqual([...state.prefixLineStarts], [...full.lineStarts.slice(0, 6)]);
@@ -431,7 +418,6 @@ ok('two-phase provisional scan and painter use only the visible prefix', () => {
 
   const p2 = makePhase2Reply({
     id: 40,
-    epoch: 1,
     lines: full.lines,
     maxLen: full.maxLen,
     indent: 2,

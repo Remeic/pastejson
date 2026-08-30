@@ -1,12 +1,7 @@
 import { buildViewFromPretty, buildMinTokens, ensureMin, type ViewModel } from './viewmodel';
 import { parseInput } from './parse';
 import { flatten, type FlatTree } from './tree';
-import {
-  makePhase1Reply,
-  makePhase2Reply,
-  type FormatRequest,
-  type Indent,
-} from './worker-protocol';
+import type { FormatRequest, Indent } from './worker-protocol';
 
 // Worker path for big payloads (>256KB).
 // - native parse + native stringify produce the exact phase-1 source
@@ -21,18 +16,16 @@ interface CachedDoc {
   bytesIn: number;
   docs: number;
   id: number;
-  epoch: number;
   vm: ViewModel | null;
 }
 
 type InMsg =
   | FormatRequest
-  | { type: 'getTree'; id: number; epoch: number }
-  | { type: 'getMin'; id: number; epoch: number };
+  | { type: 'getTree'; id: number }
+  | { type: 'getMin'; id: number };
 
 type ErrorReply = {
   id: number;
-  epoch: number;
   ok: false;
   message: string;
   offset: number;
@@ -54,57 +47,52 @@ function invalidateCachedDoc(): void {
 // clone hits the fast monomorphic path. Error replies share one shape.
 function replyErr(
   id: number,
-  epoch: number,
   message: string,
   offset: number,
   line = 0,
   col = 0,
   lineText = '',
 ): void {
-  const reply: ErrorReply = { id, epoch, ok: false, message, offset, line, col, lineText };
+  const reply: ErrorReply = { id, ok: false, message, offset, line, col, lineText };
   wself.postMessage(reply);
 }
 
 function replyPhase1(doc: CachedDoc, ms: number): void {
-  wself.postMessage(
-    makePhase1Reply({
-      id: doc.id,
-      epoch: doc.epoch,
-      pretty: doc.pretty,
-      indent: doc.indent,
-      bytesIn: doc.bytesIn,
-      docs: doc.docs,
-      ms,
-    }),
-  );
+  wself.postMessage({
+    id: doc.id,
+    ok: true,
+    phase: 1,
+    pretty: doc.pretty,
+    indent: doc.indent,
+    bytesIn: doc.bytesIn,
+    docs: doc.docs,
+    ms,
+  });
 }
 
 function replyPhase2(doc: CachedDoc, vm: ViewModel): void {
   const lineStartsBuf = vm.lineStarts.buffer as ArrayBuffer;
   const tokPBuf = vm.tokP.buffer as ArrayBuffer;
-  wself.postMessage(
-    makePhase2Reply({
-      id: doc.id,
-      epoch: doc.epoch,
-      lines: vm.lines,
-      maxLen: vm.maxLen,
-      indent: vm.indent,
-      bytesIn: vm.bytesIn,
-      docs: vm.docs,
-      lsLen: vm.lineStarts.length,
-      lineStartsBuf,
-      tokPLen: vm.tokP.length,
-      tokPBuf,
-    }),
-    [lineStartsBuf, tokPBuf] as unknown as Transferable[],
-  );
+  wself.postMessage({
+    id: doc.id,
+    ok: true,
+    phase: 2,
+    lines: vm.lines,
+    maxLen: vm.maxLen,
+    indent: vm.indent,
+    bytesIn: vm.bytesIn,
+    docs: vm.docs,
+    lsLen: vm.lineStarts.length,
+    lineStartsBuf,
+    tokPLen: vm.tokP.length,
+    tokPBuf,
+  }, [lineStartsBuf, tokPBuf] as unknown as Transferable[]);
 }
 
-function replyTree(id: number, epoch: number, t: FlatTree): void {
+function replyTree(id: number, t: FlatTree): void {
   wself.postMessage(
     {
       id,
-      epoch,
       type: 'tree',
       rowCount: t.rowCount,
       depthBuf: t.depth.buffer,
@@ -130,7 +118,6 @@ function replyTree(id: number, epoch: number, t: FlatTree): void {
 function formatDoc(
   value: unknown,
   id: number,
-  epoch: number,
   indent: Indent,
   bytesIn: number,
   docs: number,
@@ -146,7 +133,6 @@ function formatDoc(
     bytesIn,
     docs,
     id,
-    epoch,
     vm: null,
   };
   cachedDoc = doc;
@@ -171,27 +157,27 @@ self.onmessage = (e: MessageEvent<InMsg>): void => {
         const t0 = performance.now();
         const r = parseInput(m.raw);
         if (r.kind === 'error') {
-          replyErr(m.id, m.epoch, r.message, r.offset, r.line, r.col, r.lineText);
+          replyErr(m.id, r.message, r.offset, r.line, r.col, r.lineText);
           return;
         }
         const docs = r.kind === 'jsonl' ? r.docs : 0;
-        formatDoc(r.value, m.id, m.epoch, m.indent, m.raw.length, docs, performance.now() - t0);
+        formatDoc(r.value, m.id, m.indent, m.raw.length, docs, performance.now() - t0);
       } catch (err) {
-        replyErr(m.id, m.epoch, err instanceof Error ? err.message : String(err), -1);
+        replyErr(m.id, err instanceof Error ? err.message : String(err), -1);
       }
       return;
     }
     case 'reformat': {
       const prev = cachedDoc;
       if (prev === null) return;
-      formatDoc(prev.value, m.id, m.epoch, m.indent, prev.bytesIn, prev.docs, 0);
+      formatDoc(prev.value, m.id, m.indent, prev.bytesIn, prev.docs, 0);
       return;
     }
     case 'getTree': {
       const doc = cachedDoc;
       if (doc === null || doc.vm === null) return;
       // Tree is lazy: flatten on demand (labels built during the walk).
-      replyTree(m.id, m.epoch, flatten(doc.value, doc.vm.lines));
+      replyTree(m.id, flatten(doc.value, doc.vm.lines));
       return;
     }
     case 'getMin': {
@@ -202,7 +188,7 @@ self.onmessage = (e: MessageEvent<InMsg>): void => {
       buildMinTokens(vm); // ensureMin inside is now a cache hit
       const buf = vm.tokM!.buffer;
       vm.tokM = null; // transferred buffers are detached; do not reuse them
-      wself.postMessage({ id: m.id, epoch: m.epoch, type: 'min', min, tokMBuf: buf }, [
+      wself.postMessage({ id: m.id, type: 'min', min, tokMBuf: buf }, [
         buf,
       ] as unknown as Transferable[]);
       return;
