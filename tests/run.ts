@@ -99,7 +99,12 @@ ok('null root stays present for lazy source views', () => {
 
 ok('emitJson matches stringify for escaped values and tokens', () => {
   const nasty = '\u0000"\\\n' + String.fromCharCode(0xd800);
-  const value = { 'quote"key': nasty, n: -0, big: 1e21 };
+  const value = {
+    'quote"key': nasty,
+    strings: [nasty, 'plain', 'x'.repeat(256)],
+    n: -0,
+    big: 1e21,
+  };
   const r = emitJson(value, 2, 64);
   const expected = JSON.stringify(value, null, 2);
   assert.strictEqual(r.pretty, expected);

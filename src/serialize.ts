@@ -312,7 +312,16 @@ export function emitJson(
         }
         type = T_NUM;
       } else if (t === 'string') {
-        pos += escLen(child as string) + 2;
+        if (f.isArr) {
+          // JSON.stringify escapes embedded newlines, so the next raw newline
+          // is the end of this array element. Native search beats escLen on JSC.
+          const lineEnd = pretty.indexOf('\n', pos);
+          pos = lineEnd < 0
+            ? plen
+            : lineEnd - (pretty.charCodeAt(lineEnd - 1) === 44 ? 1 : 0);
+        } else {
+          pos += escLen(child as string) + 2;
+        }
         type = T_STR;
       } else if (t === 'boolean') {
         pos += child ? 4 : 5;
