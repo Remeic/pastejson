@@ -23,16 +23,16 @@ import {
   type Phase1Reply,
   type Phase2Reply,
 } from '../src/worker-protocol';
-const PHASE1_KEYS = ['id', 'ok', 'phase', 'pretty', 'indent', 'bytesIn', 'docs', 'ms'];
+const PHASE1_KEYS = ['id', 'ok', 'phase', 'pretty', 'indent', 'bytesIn', 'docs'];
 const PHASE2_KEYS = [
-  'id', 'ok', 'phase', 'lines', 'maxLen', 'indent', 'bytesIn', 'docs', 'lsLen',
+  'id', 'ok', 'phase', 'lines', 'maxLen', 'indent', 'bytesIn', 'docs', 'ms', 'lsLen',
   'lineStartsBuf', 'tokPLen', 'tokPBuf',
 ];
 function makePhase1Reply(input: Omit<Phase1Reply, 'ok' | 'phase'>): Phase1Reply {
-  return { id: input.id, ok: true, phase: 1, pretty: input.pretty, indent: input.indent, bytesIn: input.bytesIn, docs: input.docs, ms: input.ms };
+  return { id: input.id, ok: true, phase: 1, pretty: input.pretty, indent: input.indent, bytesIn: input.bytesIn, docs: input.docs };
 }
-function makePhase2Reply(input: Omit<Phase2Reply, 'ok' | 'phase'>): Phase2Reply {
-  return { id: input.id, ok: true, phase: 2, lines: input.lines, maxLen: input.maxLen, indent: input.indent, bytesIn: input.bytesIn, docs: input.docs, lsLen: input.lsLen, lineStartsBuf: input.lineStartsBuf, tokPLen: input.tokPLen, tokPBuf: input.tokPBuf };
+function makePhase2Reply(input: Omit<Phase2Reply, 'ok' | 'phase' | 'ms'> & { ms?: number }): Phase2Reply {
+  return { id: input.id, ok: true, phase: 2, lines: input.lines, maxLen: input.maxLen, indent: input.indent, bytesIn: input.bytesIn, docs: input.docs, ms: input.ms ?? 0, lsLen: input.lsLen, lineStartsBuf: input.lineStartsBuf, tokPLen: input.tokPLen, tokPBuf: input.tokPBuf };
 }
 import {
   acceptPhase1,
@@ -72,10 +72,10 @@ ok('two-phase protocol: fixed shapes keep pretty only in phase 1', () => {
     indent: 2,
     bytesIn: 9,
     docs: 0,
-    ms: 1.5,
   });
   assert.deepStrictEqual(Object.keys(p1), PHASE1_KEYS);
   assert.strictEqual(p1.pretty, '{\n  "a": 1\n}');
+  assert.ok(!('ms' in p1));
   assert.ok(!('html' in p1));
 
   const buffers = phase2Buffers();
@@ -86,11 +86,13 @@ ok('two-phase protocol: fixed shapes keep pretty only in phase 1', () => {
     indent: 2,
     bytesIn: 9,
     docs: 0,
+    ms: 12.5,
     lsLen: 3,
     ...buffers,
     tokPLen: 4,
   });
   assert.deepStrictEqual(Object.keys(p2), PHASE2_KEYS);
+  assert.strictEqual(p2.ms, 12.5);
   assert.ok(!('pretty' in p2));
   assert.ok(!('html' in p2));
 });
@@ -102,7 +104,6 @@ ok('two-phase state: phase 1 becomes hydrated only after matching phase 2', () =
     indent: 2,
     bytesIn: 5,
     docs: 0,
-    ms: 2,
   });
   let state: WorkerViewState = beginViewRequest(10);
   state = acceptPhase1(state, p1, {
@@ -124,6 +125,7 @@ ok('two-phase state: phase 1 becomes hydrated only after matching phase 2', () =
     indent: 2,
     bytesIn: 5,
     docs: 0,
+    ms: 23.75,
     lsLen: 3,
     ...buffers,
     tokPLen: 4,
@@ -132,6 +134,7 @@ ok('two-phase state: phase 1 becomes hydrated only after matching phase 2', () =
   assert.strictEqual(state.phase, 'hydrated');
   if (state.phase !== 'hydrated') return;
   assert.strictEqual(state.pretty, p1.pretty);
+  assert.strictEqual(state.ms, 23.75);
   assert.deepStrictEqual([...state.lineStarts], [0, 3, 7]);
   assert.deepStrictEqual([...state.tokP], [2, 0, 6, 1]);
 });
@@ -160,7 +163,6 @@ ok('two-phase state: stale phase 1 and phase 2 cannot replace a newer request', 
     indent: 2,
     bytesIn: 3,
     docs: 0,
-    ms: 1,
   });
   let state: WorkerViewState = beginViewRequest(20);
   state = beginViewRequest(21);
@@ -172,7 +174,6 @@ ok('two-phase state: stale phase 1 and phase 2 cannot replace a newer request', 
     indent: 2,
     bytesIn: 3,
     docs: 0,
-    ms: 1,
   });
   state = acceptPhase1(state, newerP1, {
     prefixLineStarts: new Uint32Array([0]),
@@ -202,7 +203,6 @@ ok('two-phase state: paste A then B drops both stale A phases', () => {
     indent: 2,
     bytesIn: 1,
     docs: 0,
-    ms: 1,
   });
   let state: WorkerViewState = acceptPhase1(
     beginViewRequest(50),
@@ -232,7 +232,6 @@ ok('two-phase state: paste A then B drops both stale A phases', () => {
     indent: 2,
     bytesIn: 1,
     docs: 0,
-    ms: 1,
   });
   state = acceptPhase1(state, b1, {
     prefixLineStarts: new Uint32Array([0]),
@@ -251,7 +250,6 @@ ok('two-phase state: a reformat race accepts only the new indent', () => {
     indent: 2,
     bytesIn: 7,
     docs: 0,
-    ms: 1,
   });
   let state: WorkerViewState = acceptPhase1(beginViewRequest(60), oldP1, {
     prefixLineStarts: new Uint32Array([0, 2]),
@@ -279,7 +277,6 @@ ok('two-phase state: a reformat race accepts only the new indent', () => {
     indent: 4,
     bytesIn: 7,
     docs: 0,
-    ms: 1,
   });
   state = acceptPhase1(state, newP1, {
     prefixLineStarts: new Uint32Array([0, 2]),
@@ -299,7 +296,6 @@ ok('two-phase state: reformat preserves the captured scroll position', () => {
     indent: 2,
     bytesIn: 7,
     docs: 0,
-    ms: 1,
   });
   let state: WorkerViewState = acceptPhase1(
     beginViewRequest(62, 640),
@@ -333,7 +329,6 @@ ok('two-phase state: reset and worker restart reject old replies', () => {
     indent: 2,
     bytesIn: 3,
     docs: 0,
-    ms: 1,
   });
   const reset = idleViewState(31);
   assert.strictEqual(acceptPhase1(reset, p1, phaseSeed), reset);
@@ -364,7 +359,6 @@ ok('two-phase state: null and JSONL metadata remain explicit', () => {
     indent: 2,
     bytesIn: 4,
     docs: 0,
-    ms: 1,
   });
   let state: WorkerViewState = acceptPhase1(
     beginViewRequest(35),
@@ -382,7 +376,6 @@ ok('two-phase state: null and JSONL metadata remain explicit', () => {
     indent: 2,
     bytesIn: 7,
     docs: 2,
-    ms: 1,
   });
   state = acceptPhase1(
     beginViewRequest(36),
@@ -404,7 +397,6 @@ ok('two-phase provisional scan and painter use only the visible prefix', () => {
     indent: 2,
     bytesIn: 100,
     docs: 0,
-    ms: 3,
   });
   const seed = scanProvisional(full.pretty, 6);
   let state: WorkerViewState = acceptPhase1(beginViewRequest(40), p1, seed);

@@ -31,7 +31,6 @@ export interface ProvisionalViewState {
   indent: Indent;
   bytesIn: number;
   docs: number;
-  ms: number;
   preserveScrollTop: number;
   prefixLineStarts: Uint32Array;
   rows: number;
@@ -126,7 +125,6 @@ export function acceptPhase1(
     indent: reply.indent,
     bytesIn: reply.bytesIn,
     docs: reply.docs,
-    ms: reply.ms,
     preserveScrollTop: state.preserveScrollTop,
     prefixLineStarts: seed.prefixLineStarts,
     rows: seed.rows,
@@ -154,7 +152,7 @@ export function acceptPhase2(
     indent: state.indent,
     bytesIn: state.bytesIn,
     docs: state.docs,
-    ms: state.ms,
+    ms: reply.ms,
     preserveScrollTop: state.preserveScrollTop,
     lineStarts: new Uint32Array(reply.lineStartsBuf, 0, reply.lsLen),
     lines: reply.lines,

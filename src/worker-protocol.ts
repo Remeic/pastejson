@@ -21,7 +21,6 @@ export interface Phase1Reply extends RequestMetadata {
   indent: Indent;
   bytesIn: number;
   docs: number;
-  ms: number;
 }
 
 export interface Phase2Reply extends RequestMetadata {
@@ -32,6 +31,7 @@ export interface Phase2Reply extends RequestMetadata {
   indent: Indent;
   bytesIn: number;
   docs: number;
+  ms: number;
   lsLen: number;
   lineStartsBuf: ArrayBuffer;
   tokPLen: number;

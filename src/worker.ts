@@ -57,7 +57,7 @@ function replyErr(
   wself.postMessage(reply);
 }
 
-function replyPhase1(doc: CachedDoc, ms: number): void {
+function replyPhase1(doc: CachedDoc): void {
   wself.postMessage({
     id: doc.id,
     ok: true,
@@ -66,11 +66,10 @@ function replyPhase1(doc: CachedDoc, ms: number): void {
     indent: doc.indent,
     bytesIn: doc.bytesIn,
     docs: doc.docs,
-    ms,
   });
 }
 
-function replyPhase2(doc: CachedDoc, vm: ViewModel): void {
+function replyPhase2(doc: CachedDoc, vm: ViewModel, ms: number): void {
   const lineStartsBuf = vm.lineStarts.buffer as ArrayBuffer;
   const tokPBuf = vm.tokP.buffer as ArrayBuffer;
   wself.postMessage({
@@ -82,6 +81,7 @@ function replyPhase2(doc: CachedDoc, vm: ViewModel): void {
     indent: vm.indent,
     bytesIn: vm.bytesIn,
     docs: vm.docs,
+    ms,
     lsLen: vm.lineStarts.length,
     lineStartsBuf,
     tokPLen: vm.tokP.length,
@@ -121,7 +121,7 @@ function formatDoc(
   indent: Indent,
   bytesIn: number,
   docs: number,
-  ms: number,
+  startedAt: number,
 ): void {
   // This is the only stringify on the parse/reformat path. Phase 2 receives
   // and walks this exact string; it does not rebuild it.
@@ -136,7 +136,7 @@ function formatDoc(
     vm: null,
   };
   cachedDoc = doc;
-  replyPhase1(doc, ms);
+  replyPhase1(doc);
 
   // Yield so the main thread can paint phase 1 before the value walk starts.
   setTimeout(() => {
@@ -144,7 +144,7 @@ function formatDoc(
     const vm = buildViewFromPretty(doc.value, doc.pretty, doc.indent, doc.bytesIn, doc.docs);
     if (cachedDoc !== doc) return;
     doc.vm = vm;
-    replyPhase2(doc, vm);
+    replyPhase2(doc, vm, performance.now() - startedAt);
   }, 0);
 }
 
@@ -161,7 +161,7 @@ self.onmessage = (e: MessageEvent<InMsg>): void => {
           return;
         }
         const docs = r.kind === 'jsonl' ? r.docs : 0;
-        formatDoc(r.value, m.id, m.indent, m.raw.length, docs, performance.now() - t0);
+        formatDoc(r.value, m.id, m.indent, m.raw.length, docs, t0);
       } catch (err) {
         replyErr(m.id, err instanceof Error ? err.message : String(err), -1);
       }
@@ -170,7 +170,7 @@ self.onmessage = (e: MessageEvent<InMsg>): void => {
     case 'reformat': {
       const prev = cachedDoc;
       if (prev === null) return;
-      formatDoc(prev.value, m.id, m.indent, prev.bytesIn, prev.docs, 0);
+      formatDoc(prev.value, m.id, m.indent, prev.bytesIn, prev.docs, performance.now());
       return;
     }
     case 'getTree': {

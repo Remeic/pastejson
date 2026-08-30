@@ -68,7 +68,6 @@ for (let run = 0; run < 7; run++) {
     indent: 2,
     bytesIn: raw.length,
     docs: 0,
-    ms: 0,
     preserveScrollTop: 0,
     prefixLineStarts: seed.prefixLineStarts,
     rows: seed.rows,
