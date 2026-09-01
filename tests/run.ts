@@ -99,7 +99,12 @@ ok('null root stays present for lazy source views', () => {
 
 ok('emitJson matches stringify for escaped values and tokens', () => {
   const nasty = '\u0000"\\\n' + String.fromCharCode(0xd800);
-  const value = { 'quote"key': nasty, n: -0, big: 1e21 };
+  const value = {
+    'quote"key': nasty,
+    strings: [nasty, 'plain', 'x'.repeat(256)],
+    n: -0,
+    big: 1e21,
+  };
   const r = emitJson(value, 2, 64);
   const expected = JSON.stringify(value, null, 2);
   assert.strictEqual(r.pretty, expected);
@@ -116,6 +121,28 @@ ok('emitJson handles one-line roots', () => {
   assert.strictEqual(scalar.pretty, '1');
   assert.strictEqual(scalar.lines, 1);
   assert.deepStrictEqual([...scalar.tokens], [1, T_NUM]);
+});
+
+ok('emitJson numeric fast paths keep exact token ends', () => {
+  const values = [
+    0, 9, 10, 99, 100, 999, 1000, 9999, 10000, 99999, 100000,
+    999999, 1000000, 9999999, 10000000, 99999999, 100000000,
+    999999999, -9, -10, -999999999, 0.1, -123.456, 1e21, 1e-7,
+    123456789012345680000, 3.5e300, -2.2250738585072014e-308,
+  ];
+
+  for (const value of values) {
+    const root = emitJson(value, 2, 16);
+    assert.deepStrictEqual([...root.tokens], [root.pretty.length, T_NUM]);
+  }
+
+  const nested = emitJson(values, 2, 256);
+  const expected = tokenize(nested.pretty);
+  const numberTokens: number[] = [];
+  for (let i = 0; i < expected.length; i += 2) {
+    if (expected[i + 1] === T_NUM) numberTokens.push(expected[i], expected[i + 1]);
+  }
+  assert.deepStrictEqual([...nested.tokens], numberTokens);
 });
 
 // ---------- tree flatten ----------
