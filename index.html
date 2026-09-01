@@ -61,6 +61,7 @@
       }
       .bench { margin: 2px 0 0; font-family: var(--mono); white-space: nowrap; font-size: clamp(9px, 2.7vw, 12px); color: var(--muted); }
       .bench b { color: var(--accent); font-weight: 600; }
+      .bench s { opacity: 0.7; }
       [hidden] { display: none !important; }
       #foot { position: fixed; right: 14px; bottom: 10px; display: flex; gap: 12px; font-size: 11px; }
       #foot a { color: var(--muted); text-decoration: none; }
@@ -98,7 +99,7 @@
       <p class="claim">⚡ the fastest JSON viewer — multi-MB files in milliseconds</p>
       <h1>Paste JSON.<br />See it formatted.</h1>
       <p class="hint"><kbd>⌘V</kbd> / <kbd>Ctrl+V</kbd> anywhere &nbsp;·&nbsp; or drop a .json file</p>
-      <p class="bench" title="paste → paint, min of 7 runs on M-series Mac">100 KB <b>~1 ms</b> · 1 MB <b>~4 ms</b> · 5 MB <b>~20 ms</b> · 10 MB <b>~40 ms</b></p>
+      <p class="bench" title="typical full-document render vs ours — paste to paint, min of runs">1 MB <s>65 ms</s> <b>4 ms</b> · 5 MB <s>310 ms</s> <b>~20 ms</b> · 10 MB <s>680 ms</s> <b>~40 ms</b></p>
       <p class="sub">100% local — your data never leaves the browser</p>
     </section>
 
