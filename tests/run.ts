@@ -256,6 +256,61 @@ ok('parseInput: all-broken input → plain error (not jsonl)', () => {
   assert.strictEqual(r.kind, 'error');
 });
 
+// ---------- paste sanitize (invisible clipboard junk) ----------
+ok('parseInput: BOM/NBSP/zero-width prefix strips to json', () => {
+  for (const junk of ['\uFEFF', '\u00A0', '\u200B', '\u200E', '\u2028', '\uFEFF\uFEFF']) {
+    const r = parseInput(junk + '{"a":1}');
+    assert.strictEqual(r.kind, 'json', `junk ${JSON.stringify(junk)}`);
+    if (r.kind === 'json') assert.deepStrictEqual(r.value, { a: 1 });
+  }
+});
+
+ok('parseInput: trailing junk strips too', () => {
+  const r = parseInput('{"a":1}\uFEFF\u00A0\u200B');
+  assert.strictEqual(r.kind, 'json');
+  if (r.kind === 'json') assert.deepStrictEqual(r.value, { a: 1 });
+});
+
+ok('parseInput: mid-string BOM survives (legal inside JSON strings)', () => {
+  const r = parseInput('{"a":"x\uFEFFy"}');
+  assert.strictEqual(r.kind, 'json');
+  if (r.kind === 'json') assert.strictEqual((r.value as { a: string }).a, 'x\uFEFFy');
+});
+
+ok('parseInput: junk-only input → clean error', () => {
+  const r = parseInput('\uFEFF\u00A0\u200B');
+  assert.strictEqual(r.kind, 'error');
+});
+
+ok('parseJson: junk prefix keeps line/col consistent with error position', () => {
+  const r = parseJson('\uFEFF{"a": oops}');
+  assert.ok(!r.ok);
+  if (r.ok) return;
+  const m = /position\s+(\d+)/i.exec(r.message);
+  if (m) {
+    // V8 gives a position (0-based, after junk strip → still line 1);
+    // JSC does not — line/col stay 0, nothing to check
+    assert.strictEqual(r.line, 1);
+    assert.strictEqual(r.col, Number(m[1]) + 1); // col = offset - lastNl, lastNl = -1
+    assert.ok(r.lineText.includes('"a"'));
+  }
+});
+
+ok('parseInput: leading BOM + newline is one clean doc (not jsonl)', () => {
+  const r = parseInput('\uFEFF\n{"a":1}\n');
+  assert.strictEqual(r.kind, 'json');
+  if (r.kind === 'json') assert.deepStrictEqual(r.value, { a: 1 });
+});
+
+ok('parseInput: junk between JSONL docs → per-line trim eats it', () => {
+  const r = parseInput('{"a":1}\n\uFEFF\u00A0{"b":2}\n');
+  assert.strictEqual(r.kind, 'jsonl');
+  if (r.kind === 'jsonl') {
+    assert.strictEqual(r.docs, 2);
+    assert.deepStrictEqual(r.value, [{ a: 1 }, { b: 2 }]);
+  }
+});
+
 // ---------- diff (lazy island core) ----------
 function ops(d: DiffResult): string[] {
   const out: string[] = [];
