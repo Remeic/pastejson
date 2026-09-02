@@ -1,6 +1,7 @@
 import { tokenize, T_PUNCT } from './tokenizer';
 
 export const WORKER_PREVIEW_LINES = 96;
+export const WORKER_PREVIEW_CHARS = 64 * 1024;
 export const PRETTY_CHUNK_CHARS = 4 * 1024 * 1024;
 export const CHUNKED_PRETTY_MIN = 16 * 1024 * 1024;
 
@@ -12,9 +13,15 @@ export interface WorkerPreview {
   maxLen: number;
 }
 
-export function makeWorkerPreview(pretty: string, lineLimit: number): WorkerPreview {
+export function makeWorkerPreview(
+  pretty: string,
+  lineLimit: number,
+  charLimit = WORKER_PREVIEW_CHARS,
+): WorkerPreview {
   if (!Number.isSafeInteger(lineLimit) || lineLimit < 1)
     throw new RangeError('preview line limit must be a positive integer');
+  if (!Number.isSafeInteger(charLimit) || charLimit < 1)
+    throw new RangeError('preview character limit must be a positive integer');
 
   const starts = [0];
   let from = 0;
@@ -29,12 +36,14 @@ export function makeWorkerPreview(pretty: string, lineLimit: number): WorkerPrev
     const newline = pretty.indexOf('\n', starts[starts.length - 1]);
     if (newline >= 0) end = newline;
   }
+  end = Math.min(end, charLimit);
   const source = pretty.slice(0, end);
+  const visibleStarts = end === 0 ? [0] : starts.filter((start) => start < end);
 
   let maxLen = 0;
-  for (let i = 0; i < starts.length; i++) {
-    const lineEnd = i + 1 < starts.length ? starts[i + 1] - 1 : source.length;
-    maxLen = Math.max(maxLen, lineEnd - starts[i]);
+  for (let i = 0; i < visibleStarts.length; i++) {
+    const lineEnd = i + 1 < visibleStarts.length ? visibleStarts[i + 1] - 1 : source.length;
+    maxLen = Math.max(maxLen, lineEnd - visibleStarts[i]);
   }
 
   const allTokens = tokenize(source);
@@ -53,8 +62,8 @@ export function makeWorkerPreview(pretty: string, lineLimit: number): WorkerPrev
   return {
     pretty: source,
     tokens,
-    lineStarts: Uint32Array.from(starts),
-    lines: starts.length,
+    lineStarts: Uint32Array.from(visibleStarts),
+    lines: visibleStarts.length,
     maxLen,
   };
 }

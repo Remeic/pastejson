@@ -22,8 +22,13 @@ export interface ViewModel {
   docs: number; // >0 = JSONL document count
 }
 
-export function buildView(value: unknown, indent: number | '\t', bytesIn: number): ViewModel {
-  const r = emitJson(value, indent, bytesIn);
+export function buildView(
+  value: unknown,
+  indent: number | '\t',
+  bytesIn: number,
+  onPretty?: (pretty: string) => void,
+): ViewModel {
+  const r = emitJson(value, indent, bytesIn, onPretty);
   return {
     pretty: r.pretty,
     min: null,

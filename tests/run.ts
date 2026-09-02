@@ -1,6 +1,6 @@
 // Plain assert-based test runner. Run: bun tests/run.ts
 import assert from 'node:assert';
-import { tokenize, T_STR, T_NUM, T_KEY, T_PUNCT, T_TRUE, T_FALSE, T_NULL } from '../src/tokenizer';
+import { tokenize, T_STR, T_NUM, T_KEY, T_PUNCT, T_TRUE, T_FALSE, T_NULL, T_ERR } from '../src/tokenizer';
 import { parseJson, parseInput } from '../src/parse';
 import { emitJson } from '../src/serialize';
 import { buildView, ensureMin } from '../src/viewmodel';
@@ -121,6 +121,18 @@ ok('emitJson handles one-line roots', () => {
   assert.strictEqual(scalar.pretty, '1');
   assert.strictEqual(scalar.lines, 1);
   assert.deepStrictEqual([...scalar.tokens], [1, T_NUM]);
+});
+
+ok('emitJson publishes native pretty once before the fused walk completes', () => {
+  let seen = '';
+  let calls = 0;
+  const result = emitJson({ a: [1, true] }, 2, 16, (pretty) => {
+    seen = pretty;
+    calls++;
+  });
+  assert.strictEqual(calls, 1);
+  assert.strictEqual(seen, result.pretty);
+  assert.strictEqual(seen, JSON.stringify({ a: [1, true] }, null, 2));
 });
 
 // ---------- tree flatten ----------
@@ -875,7 +887,12 @@ ok('worker preview: one-line roots and invalid limits are explicit', () => {
   assert.strictEqual(preview.pretty, '42');
   assert.strictEqual(preview.lines, 1);
   assert.deepStrictEqual([...preview.lineStarts], [0]);
+  const longScalar = makeWorkerPreview('"' + 'x'.repeat(100) + '"', 96, 16);
+  assert.strictEqual(longScalar.pretty.length, 16);
+  // charLimit cuts the closing quote → tokenizer flags the truncated string T_ERR
+  assert.deepStrictEqual([...longScalar.tokens], [16, T_ERR]);
   assert.throws(() => makeWorkerPreview('{}', 0), RangeError);
+  assert.throws(() => makeWorkerPreview('{}', 1, 0), RangeError);
 });
 
 ok('worker delivery: pretty chunks are complete and bounded', () => {
