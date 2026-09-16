@@ -335,19 +335,18 @@ function gotoMatch(st: SearchState, k: number): void {
   st.cur = ((k % n) + n) % n;
   updSearchCount();
   if (!scroller) return;
+  let row: number;
   if (treeNav) {
-    const t = st.tree!;
-    const vi = t.pos[t.visNodeIds[st.cur]];
-    const target = Math.max(0, vi * ROW_H - scroller.host.clientHeight / 2 + ROW_H / 2);
-    // scroll change paints via its own event; same-window flips need a kick
-    if (scroller.host.scrollTop !== target) scroller.host.scrollTop = target;
-    else scroller.repaint();
+    // visRows[st.cur] is the match's VISUAL row (pos holds the match index)
+    row = st.tree!.visRows[st.cur];
   } else if (curView === 'text' && vm) {
-    const line = searchMod!.lineOf(vm.lineStarts, st.starts[st.cur]);
-    const target = Math.max(0, line * ROW_H - scroller.host.clientHeight / 2 + ROW_H / 2);
-    if (scroller.host.scrollTop !== target) scroller.host.scrollTop = target;
-    else scroller.repaint();
+    row = searchMod!.lineOf(vm.lineStarts, st.starts[st.cur]);
+  } else {
+    return;
   }
+  // scroller maps the row into the (possibly compressed) scroll space and
+  // repaints when the scroll is a no-op (already there / clamped at an edge)
+  scroller.scrollToRow(row);
 }
 
 function runQuery(): void {
