@@ -204,6 +204,30 @@ ok('flatten interns repeated leaf previews', () => {
   assert.strictEqual(ft.vals.length, 2);
 });
 
+ok('flatten interning: no id collisions across literal/string/number/boundary', () => {
+  // escaped short preview (len 118) and its long-truncated twin (len 120) must
+  // share one preview id — a raw-keyed short branch used to duplicate `vals`
+  const R = 'a'.repeat(116) + '"' + '\u2026';
+  const S = R + 'zz';
+  const ft = flatten({ a: true, b: 'true', c: null, d: 'null', e: false, f: 'false', g: R, h: S, i: '5', j: 5 });
+  assert.strictEqual(new Set(ft.vals).size, ft.vals.length, 'vals must be unique');
+  const valOf = (key: string): string => {
+    for (let r = 0; r < ft.rowCount; r++) {
+      if (ft.keyIdx[r] >= 0 && ft.keys[ft.keyIdx[r]] === key) return ft.vals[ft.valIdx[r]];
+    }
+    throw new Error('key not found: ' + key);
+  };
+  assert.strictEqual(valOf('a'), 'true');
+  assert.strictEqual(valOf('b'), '"true"');
+  assert.strictEqual(valOf('c'), 'null');
+  assert.strictEqual(valOf('d'), '"null"');
+  assert.strictEqual(valOf('e'), 'false');
+  assert.strictEqual(valOf('f'), '"false"');
+  assert.strictEqual(valOf('i'), '"5"');
+  assert.strictEqual(valOf('j'), '5');
+  assert.strictEqual(valOf('g'), valOf('h'), 'short escaped preview == long truncated preview');
+});
+
 // ---------- highlighter ----------
 ok('rangeHtml wraps token classes + escapes html', () => {
   const src = '{"a<b": "<i>"}';
