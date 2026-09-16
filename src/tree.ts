@@ -78,12 +78,24 @@ function internLeaf(
   const t = typeof v;
   if (t === 'string') {
     const raw = v as string;
-    if (raw.length <= MAX_PREVIEW - 2 && !NEEDS_ESC.test(raw)) {
-      const hit = si.get(raw);
+    if (raw.length <= MAX_PREVIEW - 2) {
+      if (!NEEDS_ESC.test(raw)) {
+        // plain short: key on raw, no quoting on repeats
+        const hit = si.get(raw);
+        if (hit !== undefined) return hit;
+        const id = vals.length;
+        vals.push('"' + raw + '"');
+        si.set(raw, id);
+        return id;
+      }
+      // escaped short: preview is JSON.stringify(raw) (short previews truncate
+      // never), so skip previewStr's NEEDS_ESC re-test
+      const p = JSON.stringify(raw);
+      const hit = sl.get(p);
       if (hit !== undefined) return hit;
       const id = vals.length;
-      vals.push('"' + raw + '"');
-      si.set(raw, id);
+      vals.push(p);
+      sl.set(p, id);
       return id;
     }
     const s = previewStr(raw);
