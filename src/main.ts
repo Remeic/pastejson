@@ -335,20 +335,23 @@ function gotoMatch(st: SearchState, k: number): void {
   st.cur = ((k % n) + n) % n;
   updSearchCount();
   if (!scroller) return;
+  let row: number;
   if (treeNav) {
-    const t = st.tree!;
     // visRows[st.cur] is the match's VISUAL row (pos holds the match index)
-    const vi = t.visRows[st.cur];
-    const target = Math.max(0, vi * ROW_H - scroller.host.clientHeight / 2 + ROW_H / 2);
-    // scroll change paints via its own event; same-window flips need a kick
-    if (scroller.host.scrollTop !== target) scroller.host.scrollTop = target;
-    else scroller.repaint();
+    row = st.tree!.visRows[st.cur];
   } else if (curView === 'text' && vm) {
-    const line = searchMod!.lineOf(vm.lineStarts, st.starts[st.cur]);
-    const target = Math.max(0, line * ROW_H - scroller.host.clientHeight / 2 + ROW_H / 2);
-    if (scroller.host.scrollTop !== target) scroller.host.scrollTop = target;
-    else scroller.repaint();
+    row = searchMod!.lineOf(vm.lineStarts, st.starts[st.cur]);
+  } else {
+    return;
   }
+  const target = Math.max(0, row * ROW_H - scroller.host.clientHeight / 2 + ROW_H / 2);
+  const before = scroller.host.scrollTop;
+  if (before !== target) scroller.host.scrollTop = target;
+  // A scroll change paints via its own event. But the write can be a no-op —
+  // already at the target, or clamped at a document edge (matches near the
+  // end) — so no event fires; force the repaint or the current-match highlight
+  // never moves.
+  if (scroller.host.scrollTop === before) scroller.repaint();
 }
 
 function runQuery(): void {
