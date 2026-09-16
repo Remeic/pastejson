@@ -3,13 +3,13 @@ import assert from 'node:assert';
 import { tokenize, T_STR, T_NUM, T_KEY, T_PUNCT, T_TRUE, T_FALSE, T_NULL } from '../src/tokenizer';
 import { parseJson, parseInput } from '../src/parse';
 import { emitJson } from '../src/serialize';
-import { buildView, ensureMin } from '../src/viewmodel';
+import { buildView, ensureMin, buildMinTokens } from '../src/viewmodel';
 import { flatten, buildVisible } from '../src/tree';
 import { rangeHtml } from '../src/highlight';
 import { diffJson, diffAligned, OP_ADD, OP_DEL, OP_SAME, OP_MOD, MYERS_TRACE_BUDGET, type DiffResult } from '../src/diffcore';
 import { diffHtml, sbsHtml } from '../src/diffview';
 import { treeHtml } from '../src/render';
-import { textHtml } from '../src/render';
+import { textHtml, minHtml } from '../src/render';
 import {
   findAll,
   lineOf,
@@ -53,6 +53,19 @@ ok('tokenize literals true/false/null', () => {
 ok('tokenize numbers with exponent', () => {
   const t = tokenize('-12.34e+5');
   assert.deepStrictEqual([...t], [9, T_NUM]);
+});
+
+ok('tokenize dropPunct = full token stream minus punct', () => {
+  const s = '{"a": 1, "b": [true, null, "x\\"y"], "c": {}}';
+  const full = tokenize(s);
+  const np = tokenize(s, true);
+  const ref: number[] = [];
+  for (let i = 0; i < full.length; i += 2) {
+    if (full[i + 1] !== T_PUNCT) ref.push(full[i], full[i + 1]);
+  }
+  assert.deepStrictEqual([...np], ref);
+  // all-punct input → empty table (Min painter must handle it)
+  assert.deepStrictEqual([...tokenize('{}[]', true)], []);
 });
 
 // ---------- parse errors ----------
@@ -544,6 +557,35 @@ ok('painters: treeHtml renders flatten output end-to-end', () => {
   assert.ok(html.includes('>a<') && html.includes('>1<'), 'key + leaf value render');
   assert.ok(!html.includes('undefined'), 'no undefined leaks');
   assert.strictEqual(html.split('trow').length - 1, ft.rowCount);
+});
+
+ok('painters: minHtml drops punct tokens but keeps visible text', () => {
+  const value = { a: 1, b: [true, null, 'x'], c: {}, d: '<i>' };
+  const vm = buildView(value, 2, 0);
+  buildMinTokens(vm);
+  const html = minHtml(vm, 0, 100);
+  // punct is not a token now → no <i class=p> for it
+  assert.ok(!html.includes('class=p'), 'punct tokens absent');
+  // all value classes still present (guards against "drop everything")
+  for (const c of ['class=k', 'class=n', 'class=b', 'class=x', 'class=s']) {
+    assert.ok(html.includes(c), `missing ${c}`);
+  }
+  // reconstruct code text: strip inner tags, decode the 3 entities
+  const codes = [...html.matchAll(/<code>([\s\S]*?)<\/code>/g)].map((m) => m[1]).join('');
+  const text = codes
+    .replace(/<[^>]*>/g, '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+  assert.strictEqual(text, vm.min, 'visible min text byte-identical');
+  // all-punct min must still paint (empty token table path)
+  const vmEmpty = buildView({}, 2, 0);
+  buildMinTokens(vmEmpty);
+  assert.deepStrictEqual([...vmEmpty.tokM!], []);
+  assert.strictEqual(
+    minHtml(vmEmpty, 0, 1).replace(/<[^>]*>/g, '').replace(/^\d+/, ''),
+    '{}',
+  );
 });
 
 ok('painters: focus + sbs emit escaped html with cells/gutters', () => {
