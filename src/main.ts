@@ -337,7 +337,8 @@ function gotoMatch(st: SearchState, k: number): void {
   if (!scroller) return;
   if (treeNav) {
     const t = st.tree!;
-    const vi = t.pos[t.visNodeIds[st.cur]];
+    // visRows[st.cur] is the match's VISUAL row (pos holds the match index)
+    const vi = t.visRows[st.cur];
     const target = Math.max(0, vi * ROW_H - scroller.host.clientHeight / 2 + ROW_H / 2);
     // scroll change paints via its own event; same-window flips need a kick
     if (scroller.host.scrollTop !== target) scroller.host.scrollTop = target;

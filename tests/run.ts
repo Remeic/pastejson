@@ -764,6 +764,28 @@ ok('search tree: attach scans interned pools, node flags correct', () => {
   assert.strictEqual(t.pos[1], 0); // visual order == node order, all expanded
 });
 
+ok('search tree: visRows = match VISUAL row (goto scroll target, shifts on collapse)', () => {
+  const value = { a: { p: 1, q: 2 }, b: 0, c: { x: 'NEEDLE' } };
+  const ft = flatten(value);
+  const st = findAll(buildView(value, 2, 40), 'NEEDLE', CI);
+  let exp = new Uint8Array(ft.rowCount).fill(1);
+  let vis = buildVisible(ft, exp);
+  attachTree(st, ft, vis);
+  const t = st.tree!;
+  assert.strictEqual(t.visCount, 1);
+  const node = t.visNodeIds[0];
+  // regression: gotoMatch needs the VISUAL row, not the match index (pos)
+  assert.strictEqual(t.visRows[0], [...vis].indexOf(node), 'visRows = visual row');
+  assert.strictEqual(t.pos[node], 0, 'pos stays the match index (current-node tint)');
+  assert.ok(t.visRows[0] > 0, 'match sits below the fold, so goto must scroll');
+  exp = new Uint8Array(ft.rowCount).fill(1);
+  exp[1] = 0; // collapse 'a' (above the match) — visual row shifts up
+  vis = buildVisible(ft, exp);
+  refreshTree(st, ft, vis);
+  assert.strictEqual(st.tree!.visCount, 1);
+  assert.strictEqual(st.tree!.visRows[0], [...vis].indexOf(node), 'row follows visibility');
+});
+
 ok('search tree: collapse hides subtree matches from nav sequence', () => {
   const value = { alpha: 1, inner: { deepAlpha: 2 } };
   const ft = flatten(value);
