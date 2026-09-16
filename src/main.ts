@@ -446,12 +446,13 @@ function ensureWorker(): Worker {
     if (m.id !== reqId) return; // stale reply
     if ('type' in m && m.type === 'tree') {
       ft = {
-        depth: new Uint16Array(m.depthBuf),
-        kind: new Int32Array(m.kindBuf),
-        keyIdx: new Int32Array(m.keyIdxBuf),
-        valIdx: new Int32Array(m.valIdxBuf),
-        meta: new Int32Array(m.metaBuf),
-        subtreeRows: new Int32Array(m.subtreeRowsBuf),
+        // columns are exact-length; clip to rowCount defensively
+        depth: new Uint16Array(m.depthBuf, 0, m.rowCount),
+        kind: new Int32Array(m.kindBuf, 0, m.rowCount),
+        keyIdx: new Int32Array(m.keyIdxBuf, 0, m.rowCount),
+        valIdx: new Int32Array(m.valIdxBuf, 0, m.rowCount),
+        meta: new Int32Array(m.metaBuf, 0, m.rowCount),
+        subtreeRows: new Int32Array(m.subtreeRowsBuf, 0, m.rowCount),
         keys: m.keys,
         vals: m.vals,
         rowCount: m.rowCount,

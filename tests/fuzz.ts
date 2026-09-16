@@ -1,10 +1,11 @@
 // Fuzz: emitJson output must be byte-identical to JSON.stringify,
-// tokens identical to tokenize(pretty), lazy tree (flatten) row count exact.
+// tokens identical to tokenize(pretty), lazy tree (flatten) row count exact
+// AND columns/keys/vals byte-identical to a single preview-keyed reference walk.
 // Run: bun tests/fuzz.ts
 import assert from 'node:assert';
 import { emitJson } from '../src/serialize';
 import { tokenize, T_PUNCT } from '../src/tokenizer';
-import { flatten, buildVisible } from '../src/tree';
+import { flatten, buildVisible, type FlatTree } from '../src/tree';
 
 // deterministic xorshift
 let seed = 0x9e3779b9;
@@ -20,6 +21,7 @@ const NASTY = [
   '😀', 'a\u0301', '  ', '__proto__', 'constructor', 'length',
   '\ud800', 'x\ud800y', '\udfff', 'a\ud800\udc00b', // lone + paired surrogates
   'quote"inside', 'back\\slash', 'line\nbreak\n\nx',
+  'true', 'false', 'null', // collide with booleans/null if literal map is shared
   'a'.repeat(200),
 ];
 const NUMS = [0, -0, 1, -1, 0.1, -123.456, 1e21, 1e-7, 123456789012345680000, 3.5e300, -2.2250738585072014e-308];
@@ -60,6 +62,108 @@ function countNodes(v: unknown): number {
   return c;
 }
 
+// Independent reference: the ORIGINAL single-map (preview-keyed) interning
+// scheme, recursive for clarity. flatten()'s split maps must be byte-identical
+// to this — columns, keys[], vals[] — and keep vals unique.
+const REF_MAX = 120;
+const REF_ESC = /[\\"\u0000-\u001f]/;
+function refPreview(v: unknown): string {
+  const t = typeof v;
+  if (t === 'string') {
+    const s = v as string;
+    if (s.length > REF_MAX - 2) {
+      const j = JSON.stringify(s);
+      return j.length <= REF_MAX ? j : j.slice(0, REF_MAX - 1) + '…"';
+    }
+    return REF_ESC.test(s) ? JSON.stringify(s) : '"' + s + '"';
+  }
+  if (t === 'number') return String(v);
+  if (t === 'boolean') return v ? 'true' : 'false';
+  return 'null';
+}
+function flattenRef(value: unknown): FlatTree {
+  const depth: number[] = [];
+  const kind: number[] = [];
+  const keyIdxA: number[] = [];
+  const valIdxA: number[] = [];
+  const meta: number[] = [];
+  const subtree: number[] = [];
+  const keys: string[] = [];
+  const vals: string[] = [];
+  const ki = new Map<string, number>();
+  const vi = new Map<string, number>();
+  const internKey = (k: string): number => {
+    let id = ki.get(k);
+    if (id === undefined) {
+      id = keys.length;
+      keys.push(k);
+      ki.set(k, id);
+    }
+    return id;
+  };
+  const internVal = (v: unknown): number => {
+    const s = refPreview(v);
+    let id = vi.get(s);
+    if (id === undefined) {
+      id = vals.length;
+      vals.push(s);
+      vi.set(s, id);
+    }
+    return id;
+  };
+  const rec = (v: unknown, d: number, keyId: number): number => {
+    const row = depth.length;
+    depth.push(d);
+    keyIdxA.push(keyId);
+    meta.push(0);
+    if (v === null || typeof v !== 'object') {
+      kind.push(0);
+      valIdxA.push(internVal(v));
+      subtree.push(1);
+      return 1;
+    }
+    const isArr = Array.isArray(v);
+    kind.push(isArr ? 2 : 1);
+    valIdxA.push(-1);
+    subtree.push(-1);
+    const list = isArr ? (v as unknown[]) : Object.keys(v as Record<string, unknown>);
+    const n = list.length;
+    let count = 1;
+    for (let i = 0; i < n; i++) {
+      const kId = isArr ? -1 : internKey(list[i] as string);
+      const cv = isArr
+        ? (v as unknown[])[i]
+        : (v as Record<string, unknown>)[list[i] as string];
+      count += rec(cv, d + 1, kId);
+    }
+    meta[row] = n;
+    subtree[row] = count;
+    return count;
+  };
+  rec(value, 0, -1);
+  return {
+    depth: Uint16Array.from(depth),
+    kind: Int32Array.from(kind),
+    keyIdx: Int32Array.from(keyIdxA),
+    valIdx: Int32Array.from(valIdxA),
+    meta: Int32Array.from(meta),
+    subtreeRows: Int32Array.from(subtree),
+    keys,
+    vals,
+    rowCount: depth.length,
+  };
+}
+
+function assertSameTree(ft: FlatTree, ref: FlatTree, label: string): void {
+  assert.strictEqual(ft.rowCount, ref.rowCount, `${label} rowCount`);
+  for (const c of ['depth', 'kind', 'keyIdx', 'valIdx', 'meta', 'subtreeRows'] as const) {
+    assert.deepStrictEqual([...ft[c]], [...ref[c]], `${label} ${c}`);
+  }
+  assert.deepStrictEqual(ft.keys, ref.keys, `${label} keys`);
+  assert.deepStrictEqual(ft.vals, ref.vals, `${label} vals`);
+  assert.strictEqual(new Set(ft.vals).size, ft.vals.length, `${label} vals unique`);
+}
+
 const INDENTS: (number | '\t')[] = [2, 4, '\t'];
 let docs = 0;
 for (let it = 0; it < 500; it++) {
@@ -77,6 +181,7 @@ for (let it = 0; it < 500; it++) {
   assert.deepStrictEqual([...r.tokens], ref, `tokens mismatch @${it}`);
   const ft = flatten(v);
   assert.strictEqual(ft.rowCount, countNodes(v), `rowCount mismatch @${it}`);
+  assertSameTree(ft, flattenRef(v), `flatten vs reference @${it}`);
   assert.strictEqual(r.lines, r.lineStarts.length, `lines mismatch @${it}`);
   const vis = buildVisible(ft, new Uint8Array(ft.rowCount).fill(1));
   assert.strictEqual(vis.length, ft.rowCount, `visible mismatch @${it}`);
@@ -89,6 +194,8 @@ for (const v of [{}, [], '', 0, -0, null, true, { a: {} }, [[[[[]]]]], { '': { '
     const r = emitJson(v, ind, 100);
     assert.strictEqual(r.pretty, JSON.stringify(v, null, ind));
   }
+  assert.strictEqual(flatten(v).rowCount, countNodes(v));
+  assertSameTree(flatten(v), flattenRef(v), 'edge root');
   docs++;
 }
 
