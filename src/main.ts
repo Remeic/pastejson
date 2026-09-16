@@ -701,6 +701,16 @@ function enterView(ms: number): void {
 
 // paste anywhere on the page
 document.addEventListener('paste', (e: ClipboardEvent) => {
+  // real edit fields keep native paste — never re-parse field text as JSON
+  // (search box over a huge doc is the common case)
+  const tgt = e.target;
+  if (
+    tgt instanceof HTMLElement &&
+    tgt !== inTa &&
+    tgt !== diffTa &&
+    tgt.closest('input, textarea, [contenteditable]')
+  )
+    return;
   if (panelOpen) {
     // paste while the diff panel is open = JSON B — auto-run, product is speed
     const tb = e.clipboardData?.getData('text/plain');
