@@ -6,6 +6,8 @@
 #      target scroll clamps to the current scrollTop, so no scroll event fires
 #      and only a forced repaint updates the highlight (regression guard)
 #   3. Tree: searching an off-window node scrolls to and marks it
+#   4. Text: a near-end match in a doc taller than the browser scroll cap
+#      (compressed scroll space) stays reachable
 # Needs Google Chrome. Run: bash scripts/verify-search-nav.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -82,13 +84,27 @@ try {
     await wait(200);
     si.value = 'XNEEDLE'; si.dispatchEvent(new Event('input', { bubbles: true })); await wait(800);
     const treeMarks = document.querySelectorAll('#view mark').length;
-    return JSON.stringify({ textMarks, nextMoved: m0 !== m1, m0, m1, treeMarks });
+    // 4. Text: a near-end match in a doc taller than the browser scroll cap
+    //    (compressed scroll space) must still be reachable
+    document.querySelector('[data-view=text]').click(); await wait(300);
+    const big = [];
+    for (let i = 0; i < 550000; i++) big.push(i);
+    big.push('ZENDNEEDLE');
+    input.value = JSON.stringify(big); input.dispatchEvent(new Event('input', { bubbles: true }));
+    // input is debounced (140ms) and the old doc is still 'loaded' — wait for
+    // the NEW doc via its line count, then reopen Find (load closes search)
+    await waitFor(() => document.querySelector('#statusbar').textContent.includes('550,003 lines'));
+    await waitFor(() => document.body.dataset.mode === 'loaded');
+    document.querySelector('#btn-find').click(); await wait(300);
+    si.value = 'ZENDNEEDLE'; si.dispatchEvent(new Event('input', { bubbles: true })); await wait(1500);
+    const endReach = document.querySelectorAll('#view mark').length >= 1;
+    return JSON.stringify({ textMarks, nextMoved: m0 !== m1, m0, m1, treeMarks, endReach });
   })()`;
   const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true });
   const out = String(r.result?.result?.value ?? '');
   console.log('probe: ' + out);
   const p = JSON.parse(out);
-  const ok = p.textMarks >= 1 && p.nextMoved && p.treeMarks >= 1;
+  const ok = p.textMarks >= 1 && p.nextMoved && p.treeMarks >= 1 && p.endReach;
   console.log(ok ? 'search nav OK' : 'search nav FAIL');
   code = ok ? 0 : 1;
   ws.close();
