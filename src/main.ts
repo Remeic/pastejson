@@ -344,14 +344,9 @@ function gotoMatch(st: SearchState, k: number): void {
   } else {
     return;
   }
-  const target = Math.max(0, row * ROW_H - scroller.host.clientHeight / 2 + ROW_H / 2);
-  const before = scroller.host.scrollTop;
-  if (before !== target) scroller.host.scrollTop = target;
-  // A scroll change paints via its own event. But the write can be a no-op —
-  // already at the target, or clamped at a document edge (matches near the
-  // end) — so no event fires; force the repaint or the current-match highlight
-  // never moves.
-  if (scroller.host.scrollTop === before) scroller.repaint();
+  // scroller maps the row into the (possibly compressed) scroll space and
+  // repaints when the scroll is a no-op (already there / clamped at an edge)
+  scroller.scrollToRow(row);
 }
 
 function runQuery(): void {

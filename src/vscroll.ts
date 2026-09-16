@@ -9,12 +9,19 @@ export interface VScrollOpts {
   paint: (first: number, count: number) => string;
 }
 
+// Browsers cap element scroll height (~33.5M px Chrome, ~17.9M Firefox). Past
+// that, rows are unreachable: the spacer clamps and search/scroll can never
+// reach a deep match. When content exceeds this safe floor we compress the
+// scroll space proportionally (scale<1) so the WHOLE document stays reachable.
+const MAX_SCROLL_H = 10_000_000;
+
 export class VScroll {
   host: HTMLElement;
   private spacer: HTMLElement;
   private win: HTMLElement;
   private opts: VScrollOpts;
   private rowCount = 0;
+  private scrollH = 0; // spacer height in px (capped when the doc is huge)
   private widthPx = 0;
   private ticking = false;
   private painted = false;
@@ -49,7 +56,9 @@ export class VScroll {
   setRowCount(n: number): void {
     this.rowCount = n;
     this.painted = true;
-    const h = n * this.opts.rowH + 'px';
+    const contentH = n * this.opts.rowH;
+    this.scrollH = contentH > MAX_SCROLL_H ? MAX_SCROLL_H : contentH;
+    const h = this.scrollH + 'px';
     if (h !== this.wSpacerH) {
       this.wSpacerH = h;
       this.spacer.style.height = h;
@@ -57,6 +66,22 @@ export class VScroll {
     this.applyWidth();
     // defer to rAF: pending scroll events fire first → single correct paint
     this.schedule();
+  }
+
+  // Rows per scroll px. Normally 1/rowH. For docs taller than the browser cap
+  // the spacer is clamped to MAX_SCROLL_H, so scroll is compressed: map the
+  // whole top-row range [0, N-V] onto the scrollable range so the LAST row
+  // stays reachable (V = rows that fit the viewport).
+  private rowsPerPx(): number {
+    const h = this.host.clientHeight;
+    const v = Math.ceil(h / this.opts.rowH);
+    const n = this.rowCount;
+    if (n <= v) return 0;
+    return (n - v) / Math.max(1, this.scrollH - h);
+  }
+
+  private topRowFor(scrollTop: number): number {
+    return scrollTop * this.rowsPerPx();
   }
 
   setWidth(px: number): void {
@@ -82,6 +107,21 @@ export class VScroll {
     this.host.scrollTop = 0;
   }
 
+  // Scroll so `row` is centred. Always repaint: the window can be identical
+  // while caller state (the current search match) changed, and paintNow's
+  // window dedupe would otherwise skip it (stale highlight).
+  scrollToRow(row: number): void {
+    const h = this.host.clientHeight;
+    const v = Math.ceil(h / this.opts.rowH);
+    const n = this.rowCount;
+    if (n === 0) return;
+    const top = Math.max(0, Math.min(n - v, row - v / 2));
+    const rpp = this.rowsPerPx();
+    const target = rpp > 0 ? top / rpp : 0;
+    if (this.host.scrollTop !== target) this.host.scrollTop = target;
+    this.repaint();
+  }
+
   // force the next paint even when the visible window is unchanged
   // (paint-state flips without touching scroll — e.g. search marks)
   repaint(): void {
@@ -93,8 +133,12 @@ export class VScroll {
   // keep node `anchor` (row index in VISUAL space) at same viewport spot after data change
   reveal(anchorVisual: number): void {
     const h = this.host.clientHeight;
-    const target = Math.max(0, anchorVisual * this.opts.rowH - h / 2);
-    this.host.scrollTop = target;
+    const v = Math.ceil(h / this.opts.rowH);
+    const n = this.rowCount;
+    if (n === 0) return;
+    const top = Math.max(0, Math.min(n - v, anchorVisual - v / 2));
+    const rpp = this.rowsPerPx();
+    this.host.scrollTop = rpp > 0 ? top / rpp : 0;
   }
 
   private readonly onScroll = (): void => this.schedule();
@@ -110,7 +154,9 @@ export class VScroll {
     this.ticking = false;
     const rowH = this.opts.rowH;
     const overscan = this.opts.overscan ?? 6;
-    const first = Math.max(0, Math.floor(this.host.scrollTop / rowH) - overscan);
+    // row (float) sitting at the viewport top, in compressed scroll space
+    const rt = this.topRowFor(this.host.scrollTop);
+    const first = Math.max(0, Math.floor(rt) - overscan);
     const count = Math.ceil(this.host.clientHeight / rowH) + overscan * 2;
     const last = Math.min(first + count, this.rowCount);
     const realFirst = Math.min(first, Math.max(0, this.rowCount - 1));
@@ -121,7 +167,10 @@ export class VScroll {
     this.pRows = this.rowCount;
     const html = this.rowCount === 0 ? '' : this.opts.paint(realFirst, n);
     this.win.innerHTML = html;
-    this.win.style.transform = 'translateY(' + realFirst * rowH + 'px)';
+    // Place the window so row `rt` lands at the viewport top. At 1:1 this is
+    // exactly realFirst*rowH (unchanged); compressed, the window rides the
+    // mapped offset so deep rows stay reachable.
+    this.win.style.transform = 'translateY(' + (this.host.scrollTop - (rt - realFirst) * rowH) + 'px)';
   }
 
   private readonly doPaint = (): void => this.paintNow();
