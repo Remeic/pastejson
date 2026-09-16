@@ -47,5 +47,8 @@ export function ensureMin(vm: ViewModel): string {
 }
 
 export function buildMinTokens(vm: ViewModel): void {
-  if (vm.tokM === null) vm.tokM = tokenize(ensureMin(vm));
+  // punct dropped (same rule as the pretty path): rangeHtml attributes a gap to
+  // the FOLLOWING token, so Min punctuation colors exactly like Text; halves
+  // the token stream and the transferred buffer
+  if (vm.tokM === null) vm.tokM = tokenize(ensureMin(vm), true);
 }
