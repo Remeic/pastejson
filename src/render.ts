@@ -1,7 +1,7 @@
 // Pure render painters. Given state slices -> row HTML strings.
 // Called only for the visible window by VScroll.
 import type { ViewModel } from './viewmodel';
-import { rangeHtml, esc } from './highlight';
+import { rangeHtml, esc, firstTokenAt } from './highlight';
 import type { FlatTree } from './tree';
 
 export const MIN_CHUNK = 600;
@@ -13,12 +13,16 @@ export function textHtml(vm: ViewModel, first: number, count: number): string {
   const L = vm.lines;
   const last = Math.min(first + count, L);
   let h = '';
+  // Rows are ordered: one binary search per window, then a forward cursor.
+  const tokens = TOK.length >> 1;
+  let idx = first === 0 ? 0 : firstTokenAt(TOK, LS[first]);
   for (let i = first; i < last; i++) {
     const s = LS[i];
+    while (idx < tokens && TOK[idx * 2] <= s) idx++;
     // line content = [LS[i], newline) — the next line's leading indent lives
     // after the '\n' and must NOT leak into this row (or vanish with it)
     const e = i + 1 < L ? LS[i + 1] - 1 : P.length;
-    h += `<div class="row"><span class="ln">${i + 1}</span><code>${rangeHtml(P, TOK, s, e)}</code></div>`;
+    h += `<div class="row"><span class="ln">${i + 1}</span><code>${rangeHtml(P, TOK, s, e, idx)}</code></div>`;
   }
   return h;
 }

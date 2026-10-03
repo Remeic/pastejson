@@ -59,7 +59,9 @@ export function tokenize(src: string, dropPunct = false): Int32Array {
   const n = src.length;
   // seed: ~6 src chars per token on formatted JSON → len/6 pairs = len/3 int32s
   let cap = (n / 3) | 0;
-  if (cap < 4096) cap = 4096;
+  // One source character emits at most one token pair. Short inputs can
+  // reserve that bound; larger inputs keep the measured seed and growth path.
+  if (cap < 4096) cap = n < 2048 ? n << 1 : 4096;
   let len = 0;
   let out = new Int32Array(cap);
 
@@ -187,4 +189,3 @@ export function tokenize(src: string, dropPunct = false): Int32Array {
 
   return len === out.length ? out : out.slice(0, len);
 }
-

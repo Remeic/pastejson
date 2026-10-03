@@ -30,11 +30,11 @@ export function firstTokenAt(tokens: Int32Array, offset: number): number {
 }
 
 // HTML for source range [start,end) using full-document token table.
-export function rangeHtml(src: string, tokens: Int32Array, start: number, end: number): string {
+// Sequential callers can reuse firstTokenAt(tokens, start) from the prior row.
+export function rangeHtml(src: string, tokens: Int32Array, start: number, end: number, idx = firstTokenAt(tokens, start)): string {
   const cnt = tokens.length >> 1;
   let html = '';
   let pos = start;
-  let idx = firstTokenAt(tokens, start);
   while (idx < cnt) {
     const tokEnd = tokens[idx * 2];
     if (tokEnd <= pos) {

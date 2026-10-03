@@ -158,6 +158,70 @@ ok('emitJson numeric fast paths keep exact token ends', () => {
   assert.deepStrictEqual([...nested.tokens], numberTokens);
 });
 
+ok('emitJson capacity bounds preserve dense tokens and every line', () => {
+  let nested: unknown = 0;
+  for (let i = 0; i < 80; i++) nested = { '': nested };
+  for (const indent of [1, 2, 4, '\t'] as const) {
+    for (const value of [Array(10000).fill(0), nested, { '': 0 }, [[], {}, [0]]]) {
+      const r = emitJson(value, indent, 1);
+      const all = tokenize(r.pretty, true);
+      assert.deepStrictEqual(r.tokens, all);
+      const lines = r.pretty.split('\n');
+      let offset = 0;
+      const starts = lines.map((line) => {
+        const start = offset;
+        offset += line.length + 1;
+        return start;
+      });
+      assert.deepStrictEqual([...r.lineStarts], starts);
+      assert.strictEqual(r.maxLen, Math.max(...lines.map((line) => line.length)));
+    }
+  }
+});
+
+ok('scalar buffers and lazy Min stay exact after pretty-buffer transfer', () => {
+  for (const value of [null, true, false, -0, 1e21, Infinity, -Infinity, NaN, 'x'.repeat(65536), 'quote"\\\n\ud800😀']) {
+    const vm = buildView(value, 2, 1);
+    assert.deepStrictEqual(vm.tokP, tokenize(vm.pretty, true));
+    assert.strictEqual(vm.maxLen, vm.pretty.length);
+    assert.strictEqual(vm.tokP.buffer.byteLength, 8);
+    assert.strictEqual(vm.lineStarts.buffer.byteLength, 4);
+    structuredClone(null, { transfer: [vm.tokP.buffer, vm.lineStarts.buffer] });
+    buildMinTokens(vm);
+    assert.deepStrictEqual(vm.tokM, tokenize(JSON.stringify(value), true));
+    const tokens = vm.tokM;
+    buildMinTokens(vm);
+    assert.strictEqual(vm.tokM, tokens, 'cached Min must stay unchanged');
+  }
+});
+
+ok('overflow numbers use the native null token in roots and containers', () => {
+  for (const raw of ['1e999', '-1e999', '[1e999,-1e999,1.25,1234567890]', '{"a":1e999,"b":-1e999,"c":1.25}']) {
+    const value: unknown = JSON.parse(raw);
+    for (const indent of [1, 2, 4, '\t'] as const) {
+      const r = emitJson(value, indent, raw.length);
+      assert.strictEqual(r.pretty, JSON.stringify(value, null, indent));
+      assert.deepStrictEqual(r.tokens, tokenize(r.pretty, true));
+    }
+  }
+});
+
+ok('textHtml cursor matches independent range paints at window boundaries', () => {
+  for (const value of [null, {}, { empty: [[], {}], escaped: '<&>\\\n', rows: Array.from({ length: 100 }, (_, i) => ({ i, a: [i, 'x'] })) }]) {
+    const vm = buildView(value, '\t', 1);
+    for (const first of [0, 1, vm.lines >> 1, vm.lines - 1, vm.lines]) {
+      for (const count of [0, 1, 2, 64]) {
+        let expected = '';
+        for (let row = first; row < Math.min(first + count, vm.lines); row++) {
+          const end = row + 1 < vm.lines ? vm.lineStarts[row + 1] - 1 : vm.pretty.length;
+          expected += `<div class="row"><span class="ln">${row + 1}</span><code>${rangeHtml(vm.pretty, vm.tokP, vm.lineStarts[row], end)}</code></div>`;
+        }
+        assert.strictEqual(textHtml(vm, first, count), expected);
+      }
+    }
+  }
+});
+
 // ---------- tree flatten ----------
 ok('flatten counts + subtreeRows', () => {
   const ft = flatten({ a: 1, b: [2, 3], c: { d: null } });

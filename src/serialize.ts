@@ -65,6 +65,20 @@ export function emitJson(
   indent: number | '\t',
   _rawLenHint: number,
 ): EmitResult {
+  if (value === null || typeof value !== 'object') {
+    // A scalar has one line and one token. Native stringify supplies its
+    // length and normalizes non-finite numbers. Indent has no effect here.
+    const pretty = JSON.stringify(value) ?? 'null';
+    const c = pretty.charCodeAt(0);
+    const type = c === 34 ? T_STR : c === 116 ? T_TRUE : c === 102 ? T_FALSE : c === 110 ? T_NULL : T_NUM;
+    return {
+      pretty,
+      tokens: new Int32Array([pretty.length, type]),
+      lineStarts: new Uint32Array([0]),
+      lines: 1,
+      maxLen: pretty.length,
+    };
+  }
   const pretty = JSON.stringify(value, null, indent) ?? 'null';
   const indLen = typeof indent === 'number' ? indent : 1;
   const plen = pretty.length;
@@ -93,60 +107,6 @@ export function emitJson(
   let frameTop = 0;
 
   let cf: Frame | undefined; // current frame register
-
-  // ---- root ----
-  if (value === null || typeof value !== 'object') {
-    // inline emitLeafVal
-    {
-      const t = typeof value;
-      let type: number;
-      if (t === 'number') {
-        const num = value as number;
-        if (Number.isInteger(num) && num < 1e9 && num > -1e9) {
-          // Balanced comparisons avoid the JSC integer-division loop.
-          const a = num < 0 ? -num : num;
-          let d: number;
-          if (a < 10) {
-            d = 1;
-          } else if (a < 100) {
-            d = 2;
-          } else if (a < 10000) {
-            d = a < 1000 ? 3 : 4;
-          } else if (a < 1000000) {
-            d = a < 100000 ? 5 : 6;
-          } else {
-            d = a < 10000000 ? 7 : a < 100000000 ? 8 : 9;
-          }
-          pos += d + (num < 0 ? 1 : 0);
-        } else {
-          let jN = pos;
-          while (jN < plen) {
-            const cN = pretty.charCodeAt(jN);
-            if (cN === 44 || cN === 10 || cN === 125 || cN === 93) break;
-            jN++;
-          }
-          pos = jN;
-        }
-        type = T_NUM;
-      } else if (t === 'string') {
-        pos += escLen(value as string) + 2;
-        type = T_STR;
-      } else if (t === 'boolean') {
-        pos += value ? 4 : 5;
-        type = value ? T_TRUE : T_FALSE;
-      } else {
-        pos += 4;
-        type = T_NULL;
-      }
-      tk[tlen++] = pos;
-      tk[tlen++] = type;
-    }
-    {
-      const seg = pos - lineStart;
-      if (seg > maxLen) maxLen = seg;
-    }
-    return finish();
-  }
 
   // inline openContainer(root, depth 0)
   {
@@ -293,7 +253,9 @@ export function emitJson(
             d = a < 10000000 ? 7 : a < 100000000 ? 8 : 9;
           }
           pos += d + (num < 0 ? 1 : 0);
+          type = T_NUM;
         } else {
+          const numberStart = pos;
           if (f.isArr) {
             // Native newline search wins for arrays; mixed object values regress.
             const lineEnd = pretty.indexOf('\n', pos);
@@ -309,8 +271,10 @@ export function emitJson(
             }
             pos = jN;
           }
+          // Non-finite numbers become "null". Longer tokens cannot be null,
+          // so their type needs no source lookup or extra numeric check.
+          type = pos - numberStart === 4 && pretty.charCodeAt(numberStart) === 110 ? T_NULL : T_NUM;
         }
-        type = T_NUM;
       } else if (t === 'string') {
         if (f.isArr) {
           // JSON.stringify escapes embedded newlines, so the next raw newline
