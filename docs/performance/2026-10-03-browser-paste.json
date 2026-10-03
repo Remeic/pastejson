@@ -1,0 +1,206 @@
+{
+  "beforeHtmlSha256": "7d8a974833787d781963e43adc697a81d8ec79e64179e62e53f423529e3a7c14",
+  "afterHtmlSha256": "6dbcbb8517a849dc876984fc06780717aefbf920c8b8ea431d3091b5c5519f32",
+  "measuredAt": "2026-10-03T13:10:11.330Z",
+  "browser": "Chrome/153.0.8010.53",
+  "warmup": 3,
+  "samples": 11,
+  "statistic": "median",
+  "order": "alternating AB/BA",
+  "metric": "first main-thread Paint event after formatted rows were inserted",
+  "summary": {
+    "before": {
+      "domMs": 36.69999998807907,
+      "frameMs": 51.60000002384186,
+      "firstPaintMs": 37.016
+    },
+    "after": {
+      "domMs": 36.5,
+      "frameMs": 50.09999996423721,
+      "firstPaintMs": 36.859
+    }
+  },
+  "measurements": {
+    "before": [
+      {
+        "name": "before-0",
+        "domMs": 40.30000001192093,
+        "frameMs": 51.69999998807907,
+        "status": "2.8 MB  ·  291,284 lines  ·  22 ms",
+        "rows": 54,
+        "firstPaintMs": 40.744
+      },
+      {
+        "name": "before-1",
+        "domMs": 38,
+        "frameMs": 50.19999998807907,
+        "status": "2.8 MB  ·  291,284 lines  ·  19 ms",
+        "rows": 54,
+        "firstPaintMs": 38.485
+      },
+      {
+        "name": "before-2",
+        "domMs": 37.39999997615814,
+        "frameMs": 51.80000001192093,
+        "status": "2.8 MB  ·  291,284 lines  ·  21 ms",
+        "rows": 54,
+        "firstPaintMs": 37.857
+      },
+      {
+        "name": "before-3",
+        "domMs": 39.10000002384186,
+        "frameMs": 49.30000001192093,
+        "status": "2.8 MB  ·  291,284 lines  ·  22 ms",
+        "rows": 54,
+        "firstPaintMs": 39.547
+      },
+      {
+        "name": "before-4",
+        "domMs": 37.89999997615814,
+        "frameMs": 51.69999998807907,
+        "status": "2.8 MB  ·  291,284 lines  ·  19 ms",
+        "rows": 54,
+        "firstPaintMs": 38.343
+      },
+      {
+        "name": "before-5",
+        "domMs": 35,
+        "frameMs": 48.59999996423721,
+        "status": "2.8 MB  ·  291,284 lines  ·  18 ms",
+        "rows": 54,
+        "firstPaintMs": 35.605
+      },
+      {
+        "name": "before-6",
+        "domMs": 34,
+        "frameMs": 51.60000002384186,
+        "status": "2.8 MB  ·  291,284 lines  ·  18 ms",
+        "rows": 54,
+        "firstPaintMs": 34.408
+      },
+      {
+        "name": "before-7",
+        "domMs": 36.69999998807907,
+        "frameMs": 50,
+        "status": "2.8 MB  ·  291,284 lines  ·  18 ms",
+        "rows": 54,
+        "firstPaintMs": 36.986
+      },
+      {
+        "name": "before-8",
+        "domMs": 36.10000002384186,
+        "frameMs": 51.69999998807907,
+        "status": "2.8 MB  ·  291,284 lines  ·  19 ms",
+        "rows": 54,
+        "firstPaintMs": 36.409
+      },
+      {
+        "name": "before-9",
+        "domMs": 36.30000001192093,
+        "frameMs": 50,
+        "status": "2.8 MB  ·  291,284 lines  ·  19 ms",
+        "rows": 54,
+        "firstPaintMs": 36.712
+      },
+      {
+        "name": "before-10",
+        "domMs": 36.5,
+        "frameMs": 51.60000002384186,
+        "status": "2.8 MB  ·  291,284 lines  ·  19 ms",
+        "rows": 54,
+        "firstPaintMs": 37.016
+      }
+    ],
+    "after": [
+      {
+        "name": "after-0",
+        "domMs": 36.40000003576279,
+        "frameMs": 48.60000002384186,
+        "status": "2.8 MB  ·  291,284 lines  ·  22 ms",
+        "rows": 54,
+        "firstPaintMs": 36.783
+      },
+      {
+        "name": "after-1",
+        "domMs": 36.10000002384186,
+        "frameMs": 51.60000002384186,
+        "status": "2.8 MB  ·  291,284 lines  ·  21 ms",
+        "rows": 54,
+        "firstPaintMs": 36.63
+      },
+      {
+        "name": "after-2",
+        "domMs": 37.69999998807907,
+        "frameMs": 48.60000002384186,
+        "status": "2.8 MB  ·  291,284 lines  ·  21 ms",
+        "rows": 54,
+        "firstPaintMs": 38.154
+      },
+      {
+        "name": "after-3",
+        "domMs": 37.89999997615814,
+        "frameMs": 51.80000001192093,
+        "status": "2.8 MB  ·  291,284 lines  ·  21 ms",
+        "rows": 54,
+        "firstPaintMs": 38.271
+      },
+      {
+        "name": "after-4",
+        "domMs": 38,
+        "frameMs": 48.5,
+        "status": "2.8 MB  ·  291,284 lines  ·  20 ms",
+        "rows": 54,
+        "firstPaintMs": 38.468
+      },
+      {
+        "name": "after-5",
+        "domMs": 38.5,
+        "frameMs": 51.60000002384186,
+        "status": "2.8 MB  ·  291,284 lines  ·  20 ms",
+        "rows": 54,
+        "firstPaintMs": 39.252
+      },
+      {
+        "name": "after-6",
+        "domMs": 34.19999998807907,
+        "frameMs": 50.09999996423721,
+        "status": "2.8 MB  ·  291,284 lines  ·  19 ms",
+        "rows": 54,
+        "firstPaintMs": 34.609
+      },
+      {
+        "name": "after-7",
+        "domMs": 35.80000001192093,
+        "frameMs": 51.60000002384186,
+        "status": "2.8 MB  ·  291,284 lines  ·  19 ms",
+        "rows": 54,
+        "firstPaintMs": 36.195
+      },
+      {
+        "name": "after-8",
+        "domMs": 36.5,
+        "frameMs": 48.5,
+        "status": "2.8 MB  ·  291,284 lines  ·  20 ms",
+        "rows": 54,
+        "firstPaintMs": 36.859
+      },
+      {
+        "name": "after-9",
+        "domMs": 35.80000001192093,
+        "frameMs": 51.60000002384186,
+        "status": "2.8 MB  ·  291,284 lines  ·  20 ms",
+        "rows": 54,
+        "firstPaintMs": 36.14
+      },
+      {
+        "name": "after-10",
+        "domMs": 37.799999952316284,
+        "frameMs": 48.5,
+        "status": "2.8 MB  ·  291,284 lines  ·  21 ms",
+        "rows": 54,
+        "firstPaintMs": 38.32
+      }
+    ]
+  },
+  "exceptions": []
+}
