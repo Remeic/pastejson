@@ -23,7 +23,8 @@ cat >> "$SMOKE/index.html" <<'EOF'
 EOF
 
 bun -e '
-const CSP = `default-src \x27none\x27; script-src \x27self\x27 \x27unsafe-inline\x27; style-src \x27self\x27 \x27unsafe-inline\x27; img-src \x27self\x27 data:; worker-src blob:; connect-src \x27self\x27; base-uri \x27none\x27; form-action \x27none\x27; frame-ancestors \x27none\x27`;
+const config = await Bun.file("vercel.json").json();
+const CSP = config.headers.find((rule) => rule.source === "/(.*)").headers.find((header) => header.key === "Content-Security-Policy").value;
 const root = process.argv[2];
 const mime: Record<string, string> = { html: "text/html", js: "text/javascript", css: "text/css", svg: "image/svg+xml", png: "image/png", xml: "application/xml", txt: "text/plain", md: "text/markdown", webmanifest: "application/manifest+json" };
 Bun.serve({

@@ -19,7 +19,8 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('fetch', (e) => {
   const req = e.request;
-  if (req.method !== 'GET') return;
+  // Cache page navigations only. Markdown fetches must keep server negotiation.
+  if (req.method !== 'GET' || req.mode !== 'navigate') return;
   const url = new URL(req.url);
   if (url.origin !== location.origin || url.pathname !== '/') return;
   e.respondWith(
