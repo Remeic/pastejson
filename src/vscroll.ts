@@ -24,6 +24,7 @@ export class VScroll {
   private scrollH = 0; // spacer height in px (capped when the doc is huge)
   private widthPx = 0;
   private ticking = false;
+  private frameId = 0;
   private painted = false;
   private ro: ResizeObserver | null = null;
   // last-written style values — skip redundant style writes
@@ -146,7 +147,7 @@ export class VScroll {
   schedule(): void {
     if (!this.ticking) {
       this.ticking = true;
-      requestAnimationFrame(this.doPaint);
+      this.frameId = requestAnimationFrame(this.doPaint);
     }
   }
 
@@ -176,6 +177,8 @@ export class VScroll {
   private readonly doPaint = (): void => this.paintNow();
 
   destroy(): void {
+    cancelAnimationFrame(this.frameId); // an old painter can reference cleared document state
+    this.painted = false;
     this.host.removeEventListener('scroll', this.onScroll);
     this.ro?.disconnect();
   }
