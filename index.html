@@ -25,7 +25,7 @@
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b0e14'/%3E%3Cpath d='M24 14c-7 0-7 7-7 9s0 9-7 9c7 0 7 7 7 9s0 9 7 9' fill='none' stroke='%234cc38a' stroke-width='6' stroke-linecap='round'/%3E%3Cpath d='M40 14c7 0 7 7 7 9s0 9 7 9c-7 0-7 7-7 9s0 9-7 9' fill='none' stroke='%234cc38a' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E" />
     <script type="application/ld+json">{"@context":"https://schema.org","@type":"WebApplication","name":"json","alternateName":"pastejson","url":"https://json.justgiulio.dev/","description":"Free online JSON formatter, viewer and differ. Formats multi-MB JSON in milliseconds, fully in the browser. Nothing is uploaded.","applicationCategory":"DeveloperApplication","operatingSystem":"Any","browserRequirements":"Requires JavaScript","offers":{"@type":"Offer","price":0,"priceCurrency":"USD"},"author":{"@type":"Person","name":"Giulio Fagioli","url":"https://justgiulio.dev"},"featureList":["JSON formatting and minification","Collapsible tree view","JSON diff and compare","JSONL support","Find with regex","100% client-side processing"]}</script>
-    <style>
+    <style id="boot">
       /* boot critical CSS: styled first paint before JS module evaluates (kills FOUC) */
       :root {
         color-scheme: light dark;
@@ -66,6 +66,44 @@
       #foot { position: fixed; right: 14px; bottom: 10px; display: flex; gap: 12px; font-size: 11px; }
       #foot a { color: var(--muted); text-decoration: none; }
     </style>
+    <script id="startup">
+      // Retain gestures while the single-file application module downloads.
+      // json:ready removes these listeners and hands the latest input to main.
+      {
+        let pending = null;
+        const paste = (e) => {
+          const target = e.target;
+          if (target instanceof Element && target.id !== 'in' && target.closest('input, textarea, [contenteditable]')) return;
+          const raw = e.clipboardData?.getData('text/plain');
+          if (!raw) return;
+          e.preventDefault();
+          pending = { type: 'paste', value: raw };
+          const input = document.getElementById('in');
+          // Match main.ts's textarea cap. The retained input keeps the full source.
+          if (input) input.value = raw.length > 1_000_000 ? raw.slice(0, 1_000_000) + '\n…' : raw;
+        };
+        const input = (e) => {
+          if (e.target.id === 'in') pending = { type: 'input', value: e.target.value };
+        };
+        const drag = (e) => e.preventDefault();
+        const drop = (e) => {
+          e.preventDefault();
+          const file = e.dataTransfer?.files[0];
+          if (file) pending = { type: 'drop', value: file };
+        };
+        document.addEventListener('paste', paste);
+        document.addEventListener('input', input);
+        window.addEventListener('dragover', drag);
+        window.addEventListener('drop', drop);
+        window.addEventListener('json:ready', (e) => {
+          document.removeEventListener('paste', paste);
+          document.removeEventListener('input', input);
+          window.removeEventListener('dragover', drag);
+          window.removeEventListener('drop', drop);
+          e.detail.input = pending;
+        }, { once: true });
+      }
+    </script>
   </head>
   <body data-mode="landing">
     <div id="brand"><b>j</b>son</div>
@@ -95,7 +133,7 @@
     <div id="statusbar"></div>
     <div id="errbanner" hidden></div>
 
-    <section id="landing">
+    <section id="landing" style="visibility:hidden">
       <p class="claim">⚡ the fastest JSON viewer — multi-MB files in milliseconds</p>
       <h1>Paste JSON.<br />See it formatted.</h1>
       <p class="hint"><kbd>⌘V</kbd> / <kbd>Ctrl+V</kbd> anywhere &nbsp;·&nbsp; or drop a .json file</p>
@@ -170,6 +208,8 @@
       <a href="https://justgiulio.dev" target="_blank" rel="noopener">justgiulio.dev</a>
     </footer>
 
+    <!-- Keep the centred heading still while the document arrives in chunks. -->
+    <script>document.getElementById('landing').style.visibility = 'visible';</script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
