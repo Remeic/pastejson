@@ -4,6 +4,7 @@
 // Run: bun tests/fuzz.ts
 import assert from 'node:assert';
 import { emitJson } from '../src/serialize';
+import { buildView, buildMinTokens } from '../src/viewmodel';
 import { tokenize, T_PUNCT } from '../src/tokenizer';
 import { flatten, buildVisible, type FlatTree } from '../src/tree';
 
@@ -179,6 +180,9 @@ for (let it = 0; it < 500; it++) {
     if (toks[i + 1] !== T_PUNCT) ref.push(toks[i], toks[i + 1]);
   }
   assert.deepStrictEqual([...r.tokens], ref, `tokens mismatch @${it}`);
+  const vm = buildView(v, ind, 1000);
+  buildMinTokens(vm);
+  assert.deepStrictEqual(vm.tokM, tokenize(JSON.stringify(v), true), `min tokens mismatch @${it}`);
   const ft = flatten(v);
   assert.strictEqual(ft.rowCount, countNodes(v), `rowCount mismatch @${it}`);
   assertSameTree(ft, flattenRef(v), `flatten vs reference @${it}`);

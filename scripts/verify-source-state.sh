@@ -25,8 +25,8 @@ const html = await Bun.file(path).text();
 const probe = String.raw`<script>
 addEventListener("load", () => {
   setTimeout(async () => {
-    try {
     let phase = "init";
+    try {
     const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     const settle = (ms) => wait(ms);
     const waitFor = async (predicate, timeout = 10000) => {
@@ -35,7 +35,8 @@ addEventListener("load", () => {
         if (predicate()) return true;
         await wait(50);
       }
-      return predicate();
+      if (!predicate()) throw new Error("Timed out in " + phase);
+      return true;
     };
     const input = document.querySelector("#in");
     const status = document.querySelector("#statusbar");
@@ -146,11 +147,69 @@ Bun.serve({
 server_pid=$!
 sleep 1
 
-result=$(
-  "$CHROME" --headless=new --disable-gpu --virtual-time-budget=120000 \
-    --dump-dom http://127.0.0.1:8131/ 2>/dev/null |
-    sed -n 's/.*id="source-state-probe">\([^<]*\).*/\1/p' | tail -1
-)
+# Worker delivery uses real time. Virtual time can exhaust the probe's waits
+# before the Worker reply arrives, then read the previous document's state.
+cat > "$probe_dir/driver.mjs" <<'JS'
+import { readFileSync } from 'node:fs';
+const pause = (ms) => new Promise((done) => setTimeout(done, ms));
+const profile = process.env.PROBE_DIR + '/chrome-profile';
+const chrome = Bun.spawn([
+  process.env.CHROME, '--headless=new', '--disable-gpu', '--no-first-run',
+  '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank',
+], { stdout: 'ignore', stderr: 'ignore' });
+let ws;
+try {
+  let port = 0;
+  for (let i = 0; i < 100 && !port; i++) {
+    try { port = Number(readFileSync(profile + '/DevToolsActivePort', 'utf8').split('\n')[0]); } catch {}
+    if (!port) await pause(100);
+  }
+  if (!port) throw new Error('Chrome debugging port unavailable');
+  const tab = await (await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: 'PUT' })).json();
+  ws = new WebSocket(tab.webSocketDebuggerUrl);
+  let id = 0;
+  let loaded = false;
+  const pending = new Map();
+  ws.onmessage = (event) => {
+    const message = JSON.parse(String(event.data));
+    if (message.method === 'Page.loadEventFired') loaded = true;
+    const callback = pending.get(message.id);
+    if (callback) { pending.delete(message.id); callback(message); }
+  };
+  await new Promise((done, fail) => { ws.onopen = done; ws.onerror = fail; });
+  const send = (method, params = {}) => new Promise((done, fail) => {
+    const next = ++id;
+    const timer = setTimeout(() => { pending.delete(next); fail(new Error('Chrome timeout: ' + method)); }, 120000);
+    pending.set(next, (message) => { clearTimeout(timer); done(message); });
+    ws.send(JSON.stringify({ id: next, method, params }));
+  });
+  await send('Page.enable');
+  loaded = false;
+  const navigation = await send('Page.navigate', { url: 'http://127.0.0.1:8131/' });
+  if (navigation.error || navigation.result?.errorText) throw new Error(JSON.stringify(navigation));
+  for (let i = 0; i < 100 && !loaded; i++) await pause(100);
+  if (!loaded) throw new Error('Probe page did not load');
+  await send('Runtime.enable');
+  const reply = await send('Runtime.evaluate', {
+    expression: `(async () => {
+      for (let i = 0; i < 2200; i++) {
+        const probe = document.querySelector('#source-state-probe');
+        if (probe) return probe.textContent;
+        await new Promise((done) => setTimeout(done, 50));
+      }
+      throw new Error('Source state probe did not complete');
+    })()`, awaitPromise: true, returnByValue: true,
+  });
+  if (reply.error || reply.result?.exceptionDetails) throw new Error(JSON.stringify(reply));
+  console.log(reply.result.result.value);
+} finally {
+  ws?.close();
+  chrome.kill();
+  await chrome.exited;
+}
+process.exit(0);
+JS
+result=$(CHROME="$CHROME" PROBE_DIR="$probe_dir" bun "$probe_dir/driver.mjs")
 echo "probe: $result"
 
 case "$result" in
