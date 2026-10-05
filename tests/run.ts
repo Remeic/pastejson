@@ -1,6 +1,6 @@
 // Plain assert-based test runner. Run: bun tests/run.ts
 import assert from 'node:assert';
-import { tokenize, T_STR, T_NUM, T_KEY, T_PUNCT, T_TRUE, T_FALSE, T_NULL } from '../src/tokenizer';
+import { tokenize, T_STR, T_NUM, T_KEY, T_PUNCT, T_TRUE, T_FALSE, T_NULL, T_ERR } from '../src/tokenizer';
 import { parseJson, parseInput } from '../src/parse';
 import { emitJson } from '../src/serialize';
 import { buildView, ensureMin, buildMinTokens } from '../src/viewmodel';
@@ -11,6 +11,11 @@ import { diffHtml, sbsHtml } from '../src/diffview';
 import { treeHtml } from '../src/render';
 import { textHtml, minHtml } from '../src/render';
 import {
+  makeWorkerPreview,
+  prettyChunkAt,
+  prettyChunkCount,
+} from '../src/worker-preview';
+import {
   findAll,
   lineOf,
   rowHtml,
@@ -20,6 +25,15 @@ import {
   type SearchOpts,
   type TreeHits,
 } from '../src/search';
+import {
+  DEFAULT_BROWSER_THRESHOLDS,
+  makeBrowserFixture,
+  percentile,
+  planBrowserSessions,
+  readBrowserConfig,
+  summarizeBrowserSamples,
+  type BrowserSample,
+} from '../scripts/bench-browser-core';
 
 let passed = 0;
 function ok(name: string, fn: () => void): void {
@@ -134,6 +148,20 @@ ok('emitJson handles one-line roots', () => {
   assert.strictEqual(scalar.pretty, '1');
   assert.strictEqual(scalar.lines, 1);
   assert.deepStrictEqual([...scalar.tokens], [1, T_NUM]);
+});
+
+ok('emitJson publishes native pretty once before the fused walk completes', () => {
+  for (const value of [{ a: [1, true] }, 'text', 1, true, null, Infinity]) {
+    let seen = '';
+    let calls = 0;
+    const result = emitJson(value, 2, 16, (pretty) => {
+      seen = pretty;
+      calls++;
+    });
+    assert.strictEqual(calls, 1);
+    assert.strictEqual(seen, result.pretty);
+    assert.strictEqual(seen, JSON.stringify(value, null, 2));
+  }
 });
 
 ok('emitJson numeric fast paths keep exact token ends', () => {
@@ -365,6 +393,61 @@ ok('parseInput: bad line after good → error with line/offset', () => {
 ok('parseInput: all-broken input → plain error (not jsonl)', () => {
   const r = parseInput('{oops}\n{also bad}');
   assert.strictEqual(r.kind, 'error');
+});
+
+// ---------- paste sanitize (invisible clipboard junk) ----------
+ok('parseInput: BOM/NBSP/zero-width prefix strips to json', () => {
+  for (const junk of ['\uFEFF', '\u00A0', '\u200B', '\u200E', '\u2028', '\uFEFF\uFEFF']) {
+    const r = parseInput(junk + '{"a":1}');
+    assert.strictEqual(r.kind, 'json', `junk ${JSON.stringify(junk)}`);
+    if (r.kind === 'json') assert.deepStrictEqual(r.value, { a: 1 });
+  }
+});
+
+ok('parseInput: trailing junk strips too', () => {
+  const r = parseInput('{"a":1}\uFEFF\u00A0\u200B');
+  assert.strictEqual(r.kind, 'json');
+  if (r.kind === 'json') assert.deepStrictEqual(r.value, { a: 1 });
+});
+
+ok('parseInput: mid-string BOM survives (legal inside JSON strings)', () => {
+  const r = parseInput('{"a":"x\uFEFFy"}');
+  assert.strictEqual(r.kind, 'json');
+  if (r.kind === 'json') assert.strictEqual((r.value as { a: string }).a, 'x\uFEFFy');
+});
+
+ok('parseInput: junk-only input → clean error', () => {
+  const r = parseInput('\uFEFF\u00A0\u200B');
+  assert.strictEqual(r.kind, 'error');
+});
+
+ok('parseJson: junk prefix keeps line/col consistent with error position', () => {
+  const r = parseJson('\uFEFF{"a": oops}');
+  assert.ok(!r.ok);
+  if (r.ok) return;
+  const m = /position\s+(\d+)/i.exec(r.message);
+  if (m) {
+    // V8 gives a position (0-based, after junk strip → still line 1);
+    // JSC does not — line/col stay 0, nothing to check
+    assert.strictEqual(r.line, 1);
+    assert.strictEqual(r.col, Number(m[1]) + 1); // col = offset - lastNl, lastNl = -1
+    assert.ok(r.lineText.includes('"a"'));
+  }
+});
+
+ok('parseInput: leading BOM + newline is one clean doc (not jsonl)', () => {
+  const r = parseInput('\uFEFF\n{"a":1}\n');
+  assert.strictEqual(r.kind, 'json');
+  if (r.kind === 'json') assert.deepStrictEqual(r.value, { a: 1 });
+});
+
+ok('parseInput: junk between JSONL docs → per-line trim eats it', () => {
+  const r = parseInput('{"a":1}\n\uFEFF\u00A0{"b":2}\n');
+  assert.strictEqual(r.kind, 'jsonl');
+  if (r.kind === 'jsonl') {
+    assert.strictEqual(r.docs, 2);
+    assert.deepStrictEqual(r.value, [{ a: 1 }, { b: 2 }]);
+  }
 });
 
 // ---------- diff (lazy island core) ----------
@@ -925,6 +1008,147 @@ ok('diff: myers trace bound ≤ 8M ints at extreme widths', () => {
     const bytes = (dCap + 1) * w * 4;
     assert.ok(bytes <= 32 << 20, `w=${w} allocates ${bytes}`);
   }
+});
+
+// ---------- browser benchmark contracts ----------
+ok('browser bench: fixture is exact-size, deterministic valid JSON', () => {
+  const a = makeBrowserFixture(64 * 1024);
+  const b = makeBrowserFixture(64 * 1024);
+  assert.strictEqual(a.raw.length, 64 * 1024);
+  assert.strictEqual(a.raw, b.raw);
+  const value = JSON.parse(a.raw) as { name: string; items: { id: number }[] };
+  assert.strictEqual(value.name, 'bench');
+  assert.ok(value.items.length > 1);
+  assert.strictEqual(value.items[0].id, 0);
+  assert.deepStrictEqual(a.expectedFirstLines.slice(0, 3), ['{', '  "name": "bench",', '  "items": [']);
+});
+
+ok('browser bench: fixture rejects targets too small for representative data', () => {
+  assert.throws(() => makeBrowserFixture(100), RangeError);
+});
+
+ok('browser bench: sessions distribute every run deterministically', () => {
+  assert.deepStrictEqual(planBrowserSessions(30, 5), [6, 6, 6, 6, 6]);
+  assert.deepStrictEqual(planBrowserSessions(7, 3), [3, 2, 2]);
+  assert.throws(() => planBrowserSessions(0, 1), RangeError);
+  assert.throws(() => planBrowserSessions(2, 3), RangeError);
+});
+
+ok('browser bench: config defaults to the published protocol', () => {
+  assert.deepStrictEqual(readBrowserConfig({}), {
+    bytes: 100 * 1024 ** 2,
+    runs: 30,
+    sessions: 5,
+    enforce: true,
+  });
+  assert.deepStrictEqual(readBrowserConfig({
+    PASTEJSON_BENCH_MIB: '1',
+    PASTEJSON_BENCH_RUNS: '3',
+    PASTEJSON_BENCH_SESSIONS: '1',
+    PASTEJSON_BENCH_ENFORCE: '0',
+  }), {
+    bytes: 1024 ** 2,
+    runs: 3,
+    sessions: 1,
+    enforce: false,
+  });
+});
+
+ok('browser bench: config rejects misleading run shapes', () => {
+  assert.throws(() => readBrowserConfig({ PASTEJSON_BENCH_MIB: '0' }), RangeError);
+  assert.throws(() => readBrowserConfig({ PASTEJSON_BENCH_RUNS: '1.5' }), RangeError);
+  assert.throws(() => readBrowserConfig({
+    PASTEJSON_BENCH_RUNS: '2',
+    PASTEJSON_BENCH_SESSIONS: '3',
+  }), RangeError);
+});
+
+ok('browser bench: nearest-rank percentiles do not interpolate claims', () => {
+  assert.strictEqual(percentile([4, 1, 3, 2], 0.5), 2);
+  assert.strictEqual(percentile([4, 1, 3, 2], 0.95), 4);
+  assert.throws(() => percentile([], 0.95), RangeError);
+  assert.throws(() => percentile([1], 0), RangeError);
+});
+
+const browserSample = (overrides: Partial<BrowserSample> = {}): BrowserSample => ({
+  firstPaintMs: 700,
+  nativeMs: 400,
+  longestTaskMs: 40,
+  memoryDeltaBytes: 1024 ** 3,
+  correct: true,
+  ...overrides,
+});
+
+ok('browser bench: 100–1–2 thresholds pass together', () => {
+  const summary = summarizeBrowserSamples(
+    Array.from({ length: 30 }, () => browserSample()),
+    DEFAULT_BROWSER_THRESHOLDS,
+  );
+  assert.strictEqual(summary.pass, true);
+  assert.deepStrictEqual(summary.failures, []);
+  assert.strictEqual(summary.firstPaintP50Ms, 700);
+  assert.strictEqual(summary.firstPaintP95Ms, 700);
+  assert.strictEqual(summary.ratioP95, 1.75);
+});
+
+ok('browser bench: every failed or unmeasured contract is explicit', () => {
+  const summary = summarizeBrowserSamples([
+    browserSample({
+      firstPaintMs: 1100,
+      nativeMs: 500,
+      longestTaskMs: 51,
+      memoryDeltaBytes: null,
+      correct: false,
+    }),
+  ], DEFAULT_BROWSER_THRESHOLDS);
+  assert.strictEqual(summary.pass, false);
+  assert.deepStrictEqual(summary.failures, [
+    'paint-p50',
+    'paint-p95',
+    'native-ratio',
+    'long-task',
+    'memory-unavailable',
+    'correctness',
+  ]);
+});
+
+// ---------- progressive worker delivery ----------
+ok('worker preview: complete first lines retain non-punct token contract', () => {
+  const pretty = JSON.stringify({ items: [{ id: 1, ok: true }, { id: 2, ok: false }] }, null, 2);
+  const preview = makeWorkerPreview(pretty, 6);
+  assert.strictEqual(preview.pretty, pretty.split('\n').slice(0, 6).join('\n'));
+  assert.strictEqual(preview.lines, 6);
+  assert.deepStrictEqual([...preview.lineStarts], [0, 2, 15, 21, 36, 53]);
+  const fullTokens = tokenize(preview.pretty);
+  const nonPunct: number[] = [];
+  for (let i = 0; i < fullTokens.length; i += 2) {
+    if (fullTokens[i + 1] !== T_PUNCT) nonPunct.push(fullTokens[i], fullTokens[i + 1]);
+  }
+  assert.deepStrictEqual([...preview.tokens], nonPunct);
+});
+
+ok('worker preview: one-line roots and invalid limits are explicit', () => {
+  const preview = makeWorkerPreview('42', 96);
+  assert.strictEqual(preview.pretty, '42');
+  assert.strictEqual(preview.lines, 1);
+  assert.deepStrictEqual([...preview.lineStarts], [0]);
+  const longScalar = makeWorkerPreview('"' + 'x'.repeat(100) + '"', 96, 16);
+  assert.strictEqual(longScalar.pretty.length, 16);
+  // charLimit cuts the closing quote → tokenizer flags the truncated string T_ERR
+  assert.deepStrictEqual([...longScalar.tokens], [16, T_ERR]);
+  assert.throws(() => makeWorkerPreview('{}', 0), RangeError);
+  assert.throws(() => makeWorkerPreview('{}', 1, 0), RangeError);
+});
+
+ok('worker delivery: pretty chunks are complete and bounded', () => {
+  assert.strictEqual(prettyChunkCount('abcdefghij', 4), 3);
+  assert.deepStrictEqual(
+    [0, 1, 2].map((i) => prettyChunkAt('abcdefghij', i, 4)),
+    ['abcd', 'efgh', 'ij'],
+  );
+  assert.strictEqual(prettyChunkCount('', 4), 0);
+  assert.throws(() => prettyChunkCount('x', 0), RangeError);
+  assert.throws(() => prettyChunkAt('x', 1, 4), RangeError);
 });
 
 console.log(`\n${passed} tests passed`);
