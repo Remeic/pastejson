@@ -11,7 +11,8 @@ import { emitJson } from './serialize';
 export interface ViewModel {
   pretty: string;
   min: string | null; // lazy: built on first Minified view / copy-min
-  source: unknown; // kept for lazy min build
+  // undefined means the source lives in the Worker; null is a valid JSON value.
+  source: unknown | undefined;
   indent: number | '\t';
   lineStarts: Uint32Array; // offsets where each pretty-printed line starts
   lines: number;
@@ -51,5 +52,8 @@ export function ensureMin(vm: ViewModel): string {
 }
 
 export function buildMinTokens(vm: ViewModel): void {
-  if (vm.tokM === null) vm.tokM = tokenize(ensureMin(vm));
+  // punct dropped (same rule as the pretty path): rangeHtml attributes a gap to
+  // the FOLLOWING token, so Min punctuation colors exactly like Text; halves
+  // the token stream and the transferred buffer
+  if (vm.tokM === null) vm.tokM = tokenize(ensureMin(vm), true);
 }

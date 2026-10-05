@@ -53,7 +53,9 @@ let vm: ViewModel | null = null;
 let ft: FlatTree | null = null;
 let expanded: Uint8Array | null = null;
 let visibleRows: Int32Array | null = null;
-let parsedValue: unknown = null; // small-path only (worker holds its own copy)
+// undefined means the current document is Worker-backed (or not loaded).
+// JSON values can include null but never undefined, so this sentinel is safe.
+let parsedValue: unknown | undefined;
 let mode: Mode = 'landing';
 let curView: ViewName = 'text';
 let indent: number | '\t' = 2;
@@ -107,8 +109,15 @@ function ensureCharW(): void {
 
 // ---------- helpers ----------
 function setMode(m: Mode): void {
+  const wasWorkerBusy = mode === 'working';
   mode = m;
   body.dataset.mode = m;
+  const workerBusy = m === 'working';
+  if (workerBusy === wasWorkerBusy) return;
+  toolbar.querySelectorAll<HTMLButtonElement | HTMLSelectElement>('button, select').forEach((el) => {
+    // New stays available so a user can abandon a slow Worker parse.
+    el.disabled = workerBusy && el.id !== 'btn-new';
+  });
 }
 
 let toastTimer = 0;
@@ -184,8 +193,8 @@ async function ensureDiffMod(): Promise<typeof import('./diffview')> {
 // left side: parsed small-path value, else (big path) re-parse pretty —
 // JSON.parse is the native floor; explicit user action only.
 function getLeftValue(): unknown {
-  if (parsedValue !== null) return parsedValue;
-  if (vm && vm.source !== null) return vm.source;
+  if (parsedValue !== undefined) return parsedValue;
+  if (vm && vm.source !== undefined) return vm.source;
   return JSON.parse(vm!.pretty);
 }
 
@@ -326,19 +335,18 @@ function gotoMatch(st: SearchState, k: number): void {
   st.cur = ((k % n) + n) % n;
   updSearchCount();
   if (!scroller) return;
+  let row: number;
   if (treeNav) {
-    const t = st.tree!;
-    const vi = t.pos[t.visNodeIds[st.cur]];
-    const target = Math.max(0, vi * ROW_H - scroller.host.clientHeight / 2 + ROW_H / 2);
-    // scroll change paints via its own event; same-window flips need a kick
-    if (scroller.host.scrollTop !== target) scroller.host.scrollTop = target;
-    else scroller.repaint();
+    // visRows[st.cur] is the match's VISUAL row (pos holds the match index)
+    row = st.tree!.visRows[st.cur];
   } else if (curView === 'text' && vm) {
-    const line = searchMod!.lineOf(vm.lineStarts, st.starts[st.cur]);
-    const target = Math.max(0, line * ROW_H - scroller.host.clientHeight / 2 + ROW_H / 2);
-    if (scroller.host.scrollTop !== target) scroller.host.scrollTop = target;
-    else scroller.repaint();
+    row = searchMod!.lineOf(vm.lineStarts, st.starts[st.cur]);
+  } else {
+    return;
   }
+  // scroller maps the row into the (possibly compressed) scroll space and
+  // repaints when the scroll is a no-op (already there / clamped at an edge)
+  scroller.scrollToRow(row);
 }
 
 function runQuery(): void {
@@ -437,12 +445,13 @@ function ensureWorker(): Worker {
     if (m.id !== reqId) return; // stale reply
     if ('type' in m && m.type === 'tree') {
       ft = {
-        depth: new Uint16Array(m.depthBuf),
-        kind: new Int32Array(m.kindBuf),
-        keyIdx: new Int32Array(m.keyIdxBuf),
-        valIdx: new Int32Array(m.valIdxBuf),
-        meta: new Int32Array(m.metaBuf),
-        subtreeRows: new Int32Array(m.subtreeRowsBuf),
+        // columns are exact-length; clip to rowCount defensively
+        depth: new Uint16Array(m.depthBuf, 0, m.rowCount),
+        kind: new Int32Array(m.kindBuf, 0, m.rowCount),
+        keyIdx: new Int32Array(m.keyIdxBuf, 0, m.rowCount),
+        valIdx: new Int32Array(m.valIdxBuf, 0, m.rowCount),
+        meta: new Int32Array(m.metaBuf, 0, m.rowCount),
+        subtreeRows: new Int32Array(m.subtreeRowsBuf, 0, m.rowCount),
         keys: m.keys,
         vals: m.vals,
         rowCount: m.rowCount,
@@ -483,7 +492,7 @@ function ensureWorker(): Worker {
     vm = {
       pretty: m.pretty,
       min: null,
-      source: null, // big path: value lives in the worker
+      source: undefined, // big path: value lives in the worker
       indent: m.indent,
       lineStarts: new Uint32Array(m.lineStartsBuf, 0, m.lsLen),
       lines: m.lines,
@@ -517,6 +526,13 @@ function load(raw: string): void {
   }
 
   if (raw.length > WORKER_THRESHOLD) {
+    parsedValue = undefined;
+    vm = null;
+    ft = null;
+    expanded = null;
+    visibleRows = null;
+    scroller?.destroy();
+    scroller = null;
     setMode('working');
     // streaming preview: show raw immediately while worker parses
     out.hidden = false;
@@ -599,7 +615,7 @@ function mountScroller(v: ViewName, anchorTopVisual: number): void {
       overscan: OVERSCAN,
       paint: (a, b) => minHtml(vm!, a, b),
     });
-    if (vm!.min === null && parsedValue !== null) {
+    if (vm!.min === null && parsedValue !== undefined) {
       // small path: the worker holds no cache for this doc — build locally
       // (measured 0.7–3ms on real-world files)
       ensureMin(vm!);
@@ -635,7 +651,7 @@ function mountScroller(v: ViewName, anchorTopVisual: number): void {
     scroller.setRowCount(sbs ? alignedRes!.rowCount : (diffRes?.rowCount ?? 0));
   } else {
     if (!ft) {
-      if (parsedValue !== null) {
+      if (parsedValue !== undefined) {
         // small doc: tree is lazy — flatten on first Tree mount (self-labeled)
         ft = flatten(parsedValue, vm?.lines);
         expanded = new Uint8Array(ft.rowCount).fill(1);
@@ -684,6 +700,16 @@ function enterView(ms: number): void {
 
 // paste anywhere on the page
 document.addEventListener('paste', (e: ClipboardEvent) => {
+  // real edit fields keep native paste — never re-parse field text as JSON
+  // (search box over a huge doc is the common case)
+  const tgt = e.target;
+  if (
+    tgt instanceof HTMLElement &&
+    tgt !== inTa &&
+    tgt !== diffTa &&
+    tgt.closest('input, textarea, [contenteditable]')
+  )
+    return;
   if (panelOpen) {
     // paste while the diff panel is open = JSON B — auto-run, product is speed
     const tb = e.clipboardData?.getData('text/plain');
@@ -763,7 +789,7 @@ toolbar.addEventListener('click', (e) => {
   if (el.id === 'btn-copym') {
     if (!vm) return;
     if (vm.min !== null) return copyText(vm.min);
-    if (vm.source !== null) return copyText(ensureMin(vm)); // small path: local
+    if (vm.source !== undefined) return copyText(ensureMin(vm)); // small path: local
     wantCopyMin = true;
     ensureWorker().postMessage({ type: 'getMin', id: reqId });
     toast('preparing…');
@@ -836,7 +862,7 @@ $<HTMLSelectElement>('sel-indent').addEventListener('change', (e) => {
   if (!vm) return;
   reqId++;
   closeSearch(); // pretty rebuilt — offsets shifted
-  if (parsedValue !== null) {
+  if (parsedValue !== undefined) {
     const t0 = performance.now();
     vm = buildView(parsedValue, indent, bytesIn);
     ft = null;
@@ -878,7 +904,7 @@ function resetToLanding(): void {
   reqId++;
   vm = null;
   ft = null;
-  parsedValue = null;
+  parsedValue = undefined;
   expanded = null;
   visibleRows = null;
   diffRes = null;

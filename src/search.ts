@@ -42,7 +42,8 @@ export interface TreeHits {
   valHit: (Int32Array | null)[]; // per interned value id
   nodeHit: Uint8Array; // per node: 1 = key or value matches
   visNodeIds: Int32Array; // matching nodes in VISUAL order
-  pos: Int32Array; // nodeId -> visual sequence idx, -1 = none
+  visRows: Int32Array; // parallel to visNodeIds: the matching node's VISUAL row
+  pos: Int32Array; // nodeId -> match sequence idx (for current-node tint), -1 = none
   visCount: number;
 }
 
@@ -217,7 +218,7 @@ export function attachTree(
     if ((ki >= 0 && keyHit[ki] !== null) || (ft.kind[n] === 0 && valHit[VALIDX[n]] !== null))
       nodeHit[n] = 1;
   }
-  st.tree = { keyHit, valHit, nodeHit, visNodeIds: new Int32Array(0), pos: new Int32Array(0), visCount: 0 };
+  st.tree = { keyHit, valHit, nodeHit, visNodeIds: new Int32Array(0), visRows: new Int32Array(0), pos: new Int32Array(0), visCount: 0 };
   refreshTree(st, ft, visibleRows);
 }
 
@@ -229,15 +230,18 @@ export function refreshTree(st: SearchState, ft: FlatTree, visibleRows: Int32Arr
   const seq = visibleRows ?? allRows(ft.rowCount);
   const NODEHIT = t.nodeHit;
   const vis = new GrowInt32();
+  const rows = new GrowInt32();
   const pos = new Int32Array(ft.rowCount).fill(-1);
   for (let v = 0; v < seq.length; v++) {
     const n = seq[v];
     if (NODEHIT[n]) {
       pos[n] = vis.len;
       vis.push(n);
+      rows.push(v); // visual row of this match (gotoMatch scrolls here)
     }
   }
   t.visNodeIds = vis.trim();
+  t.visRows = rows.trim();
   t.pos = pos;
   t.visCount = vis.len;
   if (vis.len === 0) st.cur = -1;

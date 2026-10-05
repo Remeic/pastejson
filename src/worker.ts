@@ -7,7 +7,8 @@ import { flatten, type FlatTree } from './tree';
 // - buffers transfer back zero-copy
 // - parsed value cached here; tree built on demand via flatten (getTree)
 
-let cachedValue: unknown = null;
+// JSON can contain null, so presence must not use null as the sentinel.
+let cachedValue: unknown | undefined;
 let cachedVM: ViewModel | null = null;
 let cachedDocs = 0;
 
@@ -101,16 +102,16 @@ self.onmessage = (e: MessageEvent<InMsg>): void => {
       return;
     }
     case 'reformat': {
-      // cachedValue !== null implies cachedVM !== null (both set in 'parse')
+      // cachedValue is present together with cachedVM after a successful parse.
       const prev = cachedVM;
-      if (cachedValue === null || prev === null) return;
+      if (cachedValue === undefined || prev === null) return;
       cachedVM = buildView(cachedValue, m.indent, prev.bytesIn);
       replyVM(m.id, cachedVM, 0);
       return;
     }
     case 'getTree': {
       const vm = cachedVM;
-      if (vm === null || cachedValue === null) return;
+      if (vm === null || cachedValue === undefined) return;
       // tree is lazy: flatten on demand (labels built during the walk)
       replyTree(m.id, flatten(cachedValue, vm.lines));
       return;

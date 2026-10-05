@@ -3,13 +3,13 @@ import assert from 'node:assert';
 import { tokenize, T_STR, T_NUM, T_KEY, T_PUNCT, T_TRUE, T_FALSE, T_NULL, T_ERR } from '../src/tokenizer';
 import { parseJson, parseInput } from '../src/parse';
 import { emitJson } from '../src/serialize';
-import { buildView, ensureMin } from '../src/viewmodel';
+import { buildView, ensureMin, buildMinTokens } from '../src/viewmodel';
 import { flatten, buildVisible } from '../src/tree';
 import { rangeHtml } from '../src/highlight';
 import { diffJson, diffAligned, OP_ADD, OP_DEL, OP_SAME, OP_MOD, MYERS_TRACE_BUDGET, type DiffResult } from '../src/diffcore';
 import { diffHtml, sbsHtml } from '../src/diffview';
 import { treeHtml } from '../src/render';
-import { textHtml } from '../src/render';
+import { textHtml, minHtml } from '../src/render';
 import {
   makeWorkerPreview,
   prettyChunkAt,
@@ -69,6 +69,19 @@ ok('tokenize numbers with exponent', () => {
   assert.deepStrictEqual([...t], [9, T_NUM]);
 });
 
+ok('tokenize dropPunct = full token stream minus punct', () => {
+  const s = '{"a": 1, "b": [true, null, "x\\"y"], "c": {}}';
+  const full = tokenize(s);
+  const np = tokenize(s, true);
+  const ref: number[] = [];
+  for (let i = 0; i < full.length; i += 2) {
+    if (full[i + 1] !== T_PUNCT) ref.push(full[i], full[i + 1]);
+  }
+  assert.deepStrictEqual([...np], ref);
+  // all-punct input → empty table (Min painter must handle it)
+  assert.deepStrictEqual([...tokenize('{}[]', true)], []);
+});
+
 // ---------- parse errors ----------
 ok('parse error line/col extraction', () => {
   const r = parseJson('{\n  "a": 1,\n  "b": oops\n}');
@@ -102,9 +115,23 @@ ok('buildView tab indent', () => {
   assert.ok(vm.pretty.startsWith('{\n\t"a"'));
 });
 
+ok('null root stays present for lazy source views', () => {
+  const vm = buildView(null, 2, 4);
+  assert.strictEqual(vm.source, null);
+  assert.strictEqual(ensureMin(vm), 'null');
+  const ft = flatten(null, vm.lines);
+  assert.strictEqual(ft.rowCount, 1);
+  assert.strictEqual(ft.vals[ft.valIdx[0]], 'null');
+});
+
 ok('emitJson matches stringify for escaped values and tokens', () => {
   const nasty = '\u0000"\\\n' + String.fromCharCode(0xd800);
-  const value = { 'quote"key': nasty, n: -0, big: 1e21 };
+  const value = {
+    'quote"key': nasty,
+    strings: [nasty, 'plain', 'x'.repeat(256)],
+    n: -0,
+    big: 1e21,
+  };
   const r = emitJson(value, 2, 64);
   const expected = JSON.stringify(value, null, 2);
   assert.strictEqual(r.pretty, expected);
@@ -133,6 +160,28 @@ ok('emitJson publishes native pretty once before the fused walk completes', () =
   assert.strictEqual(calls, 1);
   assert.strictEqual(seen, result.pretty);
   assert.strictEqual(seen, JSON.stringify({ a: [1, true] }, null, 2));
+});
+
+ok('emitJson numeric fast paths keep exact token ends', () => {
+  const values = [
+    0, 9, 10, 99, 100, 999, 1000, 9999, 10000, 99999, 100000,
+    999999, 1000000, 9999999, 10000000, 99999999, 100000000,
+    999999999, -9, -10, -999999999, 0.1, -123.456, 1e21, 1e-7,
+    123456789012345680000, 3.5e300, -2.2250738585072014e-308,
+  ];
+
+  for (const value of values) {
+    const root = emitJson(value, 2, 16);
+    assert.deepStrictEqual([...root.tokens], [root.pretty.length, T_NUM]);
+  }
+
+  const nested = emitJson(values, 2, 256);
+  const expected = tokenize(nested.pretty);
+  const numberTokens: number[] = [];
+  for (let i = 0; i < expected.length; i += 2) {
+    if (expected[i + 1] === T_NUM) numberTokens.push(expected[i], expected[i + 1]);
+  }
+  assert.deepStrictEqual([...nested.tokens], numberTokens);
 });
 
 // ---------- tree flatten ----------
@@ -192,6 +241,30 @@ ok('flatten interns repeated leaf previews', () => {
   const ft = flatten({ a: 'same', b: 'same', c: 1 });
   assert.strictEqual(ft.valIdx[1], ft.valIdx[2]);
   assert.strictEqual(ft.vals.length, 2);
+});
+
+ok('flatten interning: no id collisions across literal/string/number/boundary', () => {
+  // escaped short preview (len 118) and its long-truncated twin (len 120) must
+  // share one preview id — a raw-keyed short branch used to duplicate `vals`
+  const R = 'a'.repeat(116) + '"' + '\u2026';
+  const S = R + 'zz';
+  const ft = flatten({ a: true, b: 'true', c: null, d: 'null', e: false, f: 'false', g: R, h: S, i: '5', j: 5 });
+  assert.strictEqual(new Set(ft.vals).size, ft.vals.length, 'vals must be unique');
+  const valOf = (key: string): string => {
+    for (let r = 0; r < ft.rowCount; r++) {
+      if (ft.keyIdx[r] >= 0 && ft.keys[ft.keyIdx[r]] === key) return ft.vals[ft.valIdx[r]];
+    }
+    throw new Error('key not found: ' + key);
+  };
+  assert.strictEqual(valOf('a'), 'true');
+  assert.strictEqual(valOf('b'), '"true"');
+  assert.strictEqual(valOf('c'), 'null');
+  assert.strictEqual(valOf('d'), '"null"');
+  assert.strictEqual(valOf('e'), 'false');
+  assert.strictEqual(valOf('f'), '"false"');
+  assert.strictEqual(valOf('i'), '"5"');
+  assert.strictEqual(valOf('j'), '5');
+  assert.strictEqual(valOf('g'), valOf('h'), 'short escaped preview == long truncated preview');
 });
 
 // ---------- highlighter ----------
@@ -567,6 +640,35 @@ ok('painters: treeHtml renders flatten output end-to-end', () => {
   assert.strictEqual(html.split('trow').length - 1, ft.rowCount);
 });
 
+ok('painters: minHtml drops punct tokens but keeps visible text', () => {
+  const value = { a: 1, b: [true, null, 'x'], c: {}, d: '<i>' };
+  const vm = buildView(value, 2, 0);
+  buildMinTokens(vm);
+  const html = minHtml(vm, 0, 100);
+  // punct is not a token now → no <i class=p> for it
+  assert.ok(!html.includes('class=p'), 'punct tokens absent');
+  // all value classes still present (guards against "drop everything")
+  for (const c of ['class=k', 'class=n', 'class=b', 'class=x', 'class=s']) {
+    assert.ok(html.includes(c), `missing ${c}`);
+  }
+  // reconstruct code text: strip inner tags, decode the 3 entities
+  const codes = [...html.matchAll(/<code>([\s\S]*?)<\/code>/g)].map((m) => m[1]).join('');
+  const text = codes
+    .replace(/<[^>]*>/g, '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+  assert.strictEqual(text, vm.min, 'visible min text byte-identical');
+  // all-punct min must still paint (empty token table path)
+  const vmEmpty = buildView({}, 2, 0);
+  buildMinTokens(vmEmpty);
+  assert.deepStrictEqual([...vmEmpty.tokM!], []);
+  assert.strictEqual(
+    minHtml(vmEmpty, 0, 1).replace(/<[^>]*>/g, '').replace(/^\d+/, ''),
+    '{}',
+  );
+});
+
 ok('painters: focus + sbs emit escaped html with cells/gutters', () => {
   const f = diffJson({ k: '<x>' }, { k: 'y>' });
   const fh = diffHtml(f, 0, f.rowCount);
@@ -741,6 +843,28 @@ ok('search tree: attach scans interned pools, node flags correct', () => {
   assert.strictEqual(countHit(t), 3);
   assert.strictEqual(t.visCount, 3);
   assert.strictEqual(t.pos[1], 0); // visual order == node order, all expanded
+});
+
+ok('search tree: visRows = match VISUAL row (goto scroll target, shifts on collapse)', () => {
+  const value = { a: { p: 1, q: 2 }, b: 0, c: { x: 'NEEDLE' } };
+  const ft = flatten(value);
+  const st = findAll(buildView(value, 2, 40), 'NEEDLE', CI);
+  let exp = new Uint8Array(ft.rowCount).fill(1);
+  let vis = buildVisible(ft, exp);
+  attachTree(st, ft, vis);
+  const t = st.tree!;
+  assert.strictEqual(t.visCount, 1);
+  const node = t.visNodeIds[0];
+  // regression: gotoMatch needs the VISUAL row, not the match index (pos)
+  assert.strictEqual(t.visRows[0], [...vis].indexOf(node), 'visRows = visual row');
+  assert.strictEqual(t.pos[node], 0, 'pos stays the match index (current-node tint)');
+  assert.ok(t.visRows[0] > 0, 'match sits below the fold, so goto must scroll');
+  exp = new Uint8Array(ft.rowCount).fill(1);
+  exp[1] = 0; // collapse 'a' (above the match) — visual row shifts up
+  vis = buildVisible(ft, exp);
+  refreshTree(st, ft, vis);
+  assert.strictEqual(st.tree!.visCount, 1);
+  assert.strictEqual(st.tree!.visRows[0], [...vis].indexOf(node), 'row follows visibility');
 });
 
 ok('search tree: collapse hides subtree matches from nav sequence', () => {
