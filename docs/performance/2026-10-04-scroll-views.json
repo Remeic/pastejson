@@ -1,0 +1,45 @@
+{
+  "measuredAt": "2026-10-03T23:56:18.244Z",
+  "beforeHtmlSha256": "6dbcbb8517a849dc876984fc06780717aefbf920c8b8ea431d3091b5c5519f32",
+  "afterHtmlSha256": "f3124e36f3c1149fb88becabd2dcb9ed341fa7a5131894ca6fc4991b1ead43a7",
+  "browser": "Chrome/153.0.8010.53",
+  "snapshots": [
+    "text-top",
+    "text-jump",
+    "text-down",
+    "text-up",
+    "search",
+    "search-next",
+    "regex",
+    "bad-regex",
+    "search-closed",
+    "tree-top",
+    "tree-jump",
+    "tree-down",
+    "tree-up",
+    "tree-collapse",
+    "tree-expand",
+    "min-top",
+    "min-jump",
+    "min-down",
+    "min-up",
+    "diff-top",
+    "diff-jump",
+    "diff-down",
+    "diff-up",
+    "sbs-top",
+    "sbs-jump",
+    "sbs-down",
+    "sbs-up"
+  ],
+  "checks": [
+    "Footer link targets",
+    "Scalar view status"
+  ],
+  "byteEqual": true,
+  "baselineQueuedPaintErrors": [
+    "TypeError: Cannot read properties of null (reading 'length')",
+    "TypeError: Cannot read properties of null (reading 'pretty')"
+  ],
+  "exceptions": []
+}

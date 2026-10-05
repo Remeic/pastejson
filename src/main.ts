@@ -1064,6 +1064,24 @@ async function tryClipboardAuto(): Promise<void> {
   }
 }
 
+// The shell can paint before this module arrives. Remove the temporary
+// capture listeners, then load the latest retained input exactly once.
+{
+  type StartupInput = { type: 'input' | 'paste'; value: string } | { type: 'drop'; value: File };
+  const startupInput: { input: StartupInput | null } = { input: null };
+  window.dispatchEvent(new CustomEvent('json:ready', { detail: startupInput }));
+  const captured = startupInput.input;
+  if (captured?.type === 'drop') {
+    captured.value.text().then(load).catch(() => toast('Could not read file'));
+  } else {
+    const raw = captured?.value ?? inTa.value;
+    if (raw && (captured?.type === 'paste' || !/^\s*$/.test(raw))) {
+      setTa(raw);
+      load(raw);
+    }
+  }
+}
+
 // after first paint, off the critical path (works when permission granted)
 requestAnimationFrame(() => setTimeout(() => void tryClipboardAuto(), 0));
 

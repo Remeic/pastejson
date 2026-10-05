@@ -1,0 +1,321 @@
+{
+  "measuredAt": "2026-10-04T00:17:10.668Z",
+  "browser": "Chrome/153.0.8010.53",
+  "conditions": {
+    "cpuRate": 4,
+    "latencyMs": 100,
+    "downloadBytesPerSecond": 200000,
+    "encoding": "gzip",
+    "httpCache": "disabled",
+    "serviceWorker": "enabled"
+  },
+  "samples": 11,
+  "warmup": 3,
+  "order": "alternating AB/BA",
+  "statistic": "median",
+  "beforeHtmlSha256": "6dbcbb8517a849dc876984fc06780717aefbf920c8b8ea431d3091b5c5519f32",
+  "afterHtmlSha256": "f3124e36f3c1149fb88becabd2dcb9ed341fa7a5131894ca6fc4991b1ead43a7",
+  "beforeServedHtmlSha256": "2d0a29a83344fcf37be62ee10fdfe6d0c1ff722e5500ae980454e97914dc5c4c",
+  "afterServedHtmlSha256": "8dd39556ce61da99c1398d5ab8c8280ae1aa6e4d0d4950d10179149953fac72e",
+  "probe": "HTML comments mark v1 and v2 for cache update checks",
+  "beforeWorkerSha256": "2511996d972372158dad3aaff40145b289342740a99faff79e5499fcb90dcb0f",
+  "afterWorkerSha256": "d1a9cab7977a1e4b8a12f0c8fdce9564c909968b433f383cca5f6022e0bfe203",
+  "beforeCsp": "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; worker-src blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+  "afterCsp": "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; worker-src 'self' blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+  "initial": {
+    "before": {
+      "fcpMs": 308,
+      "lcpMs": 308,
+      "readyMs": 309.4000000357628,
+      "controlled": false,
+      "violations": [
+        {
+          "directive": "worker-src",
+          "uri": "http://127.0.0.1:52874/sw.js"
+        }
+      ],
+      "v2": false
+    },
+    "after": {
+      "fcpMs": 164,
+      "lcpMs": 180,
+      "readyMs": 249.69999998807907,
+      "controlled": true,
+      "violations": [],
+      "v2": false
+    }
+  },
+  "loads": {
+    "before": [
+      {
+        "fcpMs": 252,
+        "lcpMs": 252,
+        "readyMs": 246.0999999642372,
+        "controlled": false,
+        "violations": [
+          {
+            "directive": "worker-src",
+            "uri": "http://127.0.0.1:52874/sw.js"
+          }
+        ],
+        "v2": false
+      },
+      {
+        "fcpMs": 260,
+        "lcpMs": 260,
+        "readyMs": 250.60000002384186,
+        "controlled": false,
+        "violations": [
+          {
+            "directive": "worker-src",
+            "uri": "http://127.0.0.1:52874/sw.js"
+          }
+        ],
+        "v2": false
+      },
+      {
+        "fcpMs": 256,
+        "lcpMs": 256,
+        "readyMs": 248,
+        "controlled": false,
+        "violations": [
+          {
+            "directive": "worker-src",
+            "uri": "http://127.0.0.1:52874/sw.js"
+          }
+        ],
+        "v2": false
+      },
+      {
+        "fcpMs": 252,
+        "lcpMs": 252,
+        "readyMs": 244.0999999642372,
+        "controlled": false,
+        "violations": [
+          {
+            "directive": "worker-src",
+            "uri": "http://127.0.0.1:52874/sw.js"
+          }
+        ],
+        "v2": false
+      },
+      {
+        "fcpMs": 252,
+        "lcpMs": 252,
+        "readyMs": 246.20000004768372,
+        "controlled": false,
+        "violations": [
+          {
+            "directive": "worker-src",
+            "uri": "http://127.0.0.1:52874/sw.js"
+          }
+        ],
+        "v2": false
+      },
+      {
+        "fcpMs": 272,
+        "lcpMs": 272,
+        "readyMs": 247.30000001192093,
+        "controlled": false,
+        "violations": [
+          {
+            "directive": "worker-src",
+            "uri": "http://127.0.0.1:52874/sw.js"
+          }
+        ],
+        "v2": false
+      },
+      {
+        "fcpMs": 256,
+        "lcpMs": 256,
+        "readyMs": 250.60000002384186,
+        "controlled": false,
+        "violations": [
+          {
+            "directive": "worker-src",
+            "uri": "http://127.0.0.1:52874/sw.js"
+          }
+        ],
+        "v2": false
+      },
+      {
+        "fcpMs": 256,
+        "lcpMs": 256,
+        "readyMs": 244.5,
+        "controlled": false,
+        "violations": [
+          {
+            "directive": "worker-src",
+            "uri": "http://127.0.0.1:52874/sw.js"
+          }
+        ],
+        "v2": false
+      },
+      {
+        "fcpMs": 256,
+        "lcpMs": 256,
+        "readyMs": 247.79999995231628,
+        "controlled": false,
+        "violations": [
+          {
+            "directive": "worker-src",
+            "uri": "http://127.0.0.1:52874/sw.js"
+          }
+        ],
+        "v2": false
+      },
+      {
+        "fcpMs": 264,
+        "lcpMs": 264,
+        "readyMs": 245.89999997615814,
+        "controlled": false,
+        "violations": [
+          {
+            "directive": "worker-src",
+            "uri": "http://127.0.0.1:52874/sw.js"
+          }
+        ],
+        "v2": false
+      },
+      {
+        "fcpMs": 256,
+        "lcpMs": 256,
+        "readyMs": 247,
+        "controlled": false,
+        "violations": [
+          {
+            "directive": "worker-src",
+            "uri": "http://127.0.0.1:52874/sw.js"
+          }
+        ],
+        "v2": false
+      }
+    ],
+    "after": [
+      {
+        "fcpMs": 52,
+        "lcpMs": 52,
+        "readyMs": 39.60000002384186,
+        "controlled": true,
+        "violations": [],
+        "v2": false
+      },
+      {
+        "fcpMs": 56,
+        "lcpMs": 56,
+        "readyMs": 39.60000002384186,
+        "controlled": true,
+        "violations": [],
+        "v2": false
+      },
+      {
+        "fcpMs": 68,
+        "lcpMs": 68,
+        "readyMs": 56.60000002384186,
+        "controlled": true,
+        "violations": [],
+        "v2": false
+      },
+      {
+        "fcpMs": 68,
+        "lcpMs": 68,
+        "readyMs": 58.19999998807907,
+        "controlled": true,
+        "violations": [],
+        "v2": false
+      },
+      {
+        "fcpMs": 84,
+        "lcpMs": 84,
+        "readyMs": 65,
+        "controlled": true,
+        "violations": [],
+        "v2": false
+      },
+      {
+        "fcpMs": 60,
+        "lcpMs": 60,
+        "readyMs": 57.799999952316284,
+        "controlled": true,
+        "violations": [],
+        "v2": false
+      },
+      {
+        "fcpMs": 84,
+        "lcpMs": 84,
+        "readyMs": 50.30000001192093,
+        "controlled": true,
+        "violations": [],
+        "v2": false
+      },
+      {
+        "fcpMs": 88,
+        "lcpMs": 88,
+        "readyMs": 55.5,
+        "controlled": true,
+        "violations": [],
+        "v2": false
+      },
+      {
+        "fcpMs": 68,
+        "lcpMs": 68,
+        "readyMs": 34.299999952316284,
+        "controlled": true,
+        "violations": [],
+        "v2": false
+      },
+      {
+        "fcpMs": 72,
+        "lcpMs": 72,
+        "readyMs": 38.40000003576279,
+        "controlled": true,
+        "violations": [],
+        "v2": false
+      },
+      {
+        "fcpMs": 28,
+        "lcpMs": 28,
+        "readyMs": 18.69999998807907,
+        "controlled": true,
+        "violations": [],
+        "v2": false
+      }
+    ]
+  },
+  "summary": {
+    "before": {
+      "fcpMs": 256,
+      "lcpMs": 256,
+      "readyMs": 247
+    },
+    "after": {
+      "fcpMs": 68,
+      "lcpMs": 68,
+      "readyMs": 50.30000001192093
+    }
+  },
+  "checks": {
+    "markdown": {
+      "type": "text/markdown",
+      "body": "# Markdown probe\n"
+    },
+    "update": {
+      "fcpMs": 20,
+      "lcpMs": 20,
+      "readyMs": 20.19999998807907,
+      "controlled": true,
+      "violations": [],
+      "v2": true
+    },
+    "offline": {
+      "fcpMs": 64,
+      "lcpMs": 64,
+      "readyMs": 59.09999996423721,
+      "controlled": true,
+      "violations": [],
+      "v2": true
+    },
+    "offlineWorkerInput": true
+  },
+  "exceptions": []
+}

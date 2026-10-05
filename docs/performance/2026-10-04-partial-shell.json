@@ -1,0 +1,511 @@
+{
+  "beforeHtmlSha256": "6dbcbb8517a849dc876984fc06780717aefbf920c8b8ea431d3091b5c5519f32",
+  "afterHtmlSha256": "58b3bf99b68657c3f61f8fbf8e24574659469c30ddf7170e49454ca7877d339e",
+  "measuredAt": "2026-10-03T22:59:55.547Z",
+  "browser": "Chrome/153.0.8010.53",
+  "machine": "Apple M4",
+  "os": "25.5.0",
+  "conditions": {
+    "cpuRate": 4,
+    "latencyMs": 100,
+    "downloadBytesPerSecond": 200000,
+    "encoding": "gzip",
+    "compressedBytes": {
+      "before": 26199,
+      "after": 26481
+    },
+    "cache": "disabled",
+    "serviceWorker": "bypassed"
+  },
+  "samples": 11,
+  "warmup": 3,
+  "order": "alternating AB/BA",
+  "statistic": "median",
+  "summary": {
+    "before": {
+      "load": {
+        "fcpMs": 244,
+        "lcpMs": 256,
+        "readyMs": 244.0999999642372,
+        "responseEndMs": 241.79999995231628,
+        "scriptMs": 3.26,
+        "layoutMs": 0.864,
+        "cls": 0
+      }
+    },
+    "after": {
+      "load": {
+        "fcpMs": 168,
+        "lcpMs": 168,
+        "readyMs": 247.30000001192093,
+        "responseEndMs": 241.60000002384186,
+        "scriptMs": 3.612,
+        "layoutMs": 0.892,
+        "cls": 0
+      }
+    }
+  },
+  "loads": {
+    "before": [
+      {
+        "lcpMs": 252,
+        "cls": 0,
+        "shifts": [],
+        "fcpMs": 240,
+        "readyMs": 243.5,
+        "responseEndMs": 240.69999998807907,
+        "scriptMs": 1.4929999999999999,
+        "layoutMs": 0.962
+      },
+      {
+        "lcpMs": 256,
+        "cls": 0,
+        "shifts": [],
+        "fcpMs": 244,
+        "readyMs": 247,
+        "responseEndMs": 244.79999995231628,
+        "scriptMs": 3.7230000000000003,
+        "layoutMs": 1.141
+      },
+      {
+        "lcpMs": 252,
+        "cls": 0,
+        "shifts": [],
+        "fcpMs": 244,
+        "readyMs": 245.89999997615814,
+        "responseEndMs": 243.39999997615814,
+        "scriptMs": 3.262,
+        "layoutMs": 1.8359999999999999
+      },
+      {
+        "lcpMs": 252,
+        "cls": 0,
+        "shifts": [],
+        "fcpMs": 240,
+        "readyMs": 244.30000001192093,
+        "responseEndMs": 241.80000001192093,
+        "scriptMs": 3.1449999999999996,
+        "layoutMs": 0.213
+      },
+      {
+        "lcpMs": 252,
+        "cls": 0,
+        "shifts": [],
+        "fcpMs": 244,
+        "readyMs": 246.10000002384186,
+        "responseEndMs": 243.4000000357628,
+        "scriptMs": 3.9119999999999995,
+        "layoutMs": 0.8630000000000001
+      },
+      {
+        "lcpMs": 260,
+        "cls": 0,
+        "shifts": [],
+        "fcpMs": 240,
+        "readyMs": 244.0999999642372,
+        "responseEndMs": 241.79999995231628,
+        "scriptMs": 2.7590000000000003,
+        "layoutMs": 0.896
+      },
+      {
+        "lcpMs": 264,
+        "cls": 0,
+        "shifts": [],
+        "fcpMs": 248,
+        "readyMs": 240.60000002384186,
+        "responseEndMs": 238.4000000357628,
+        "scriptMs": 4.515,
+        "layoutMs": 0.621
+      },
+      {
+        "lcpMs": 264,
+        "cls": 0,
+        "shifts": [],
+        "fcpMs": 252,
+        "readyMs": 245,
+        "responseEndMs": 242.69999998807907,
+        "scriptMs": 3.26,
+        "layoutMs": 0.745
+      },
+      {
+        "lcpMs": 256,
+        "cls": 0,
+        "shifts": [],
+        "fcpMs": 240,
+        "readyMs": 241.70000004768372,
+        "responseEndMs": 239.10000002384186,
+        "scriptMs": 2.297,
+        "layoutMs": 1.016
+      },
+      {
+        "lcpMs": 252,
+        "cls": 0,
+        "shifts": [],
+        "fcpMs": 236,
+        "readyMs": 244,
+        "responseEndMs": 241.29999995231628,
+        "scriptMs": 3.126,
+        "layoutMs": 0.864
+      },
+      {
+        "lcpMs": 268,
+        "cls": 0,
+        "shifts": [],
+        "fcpMs": 248,
+        "readyMs": 243,
+        "responseEndMs": 240.20000004768372,
+        "scriptMs": 4.179,
+        "layoutMs": 0.83
+      }
+    ],
+    "after": [
+      {
+        "lcpMs": 160,
+        "cls": 0,
+        "shifts": [],
+        "fcpMs": 160,
+        "readyMs": 247.89999997615814,
+        "responseEndMs": 242.39999997615814,
+        "scriptMs": 2.7009999999999996,
+        "layoutMs": 2.036
+      },
+      {
+        "lcpMs": 168,
+        "cls": 0,
+        "shifts": [],
+        "fcpMs": 168,
+        "readyMs": 247.4000000357628,
+        "responseEndMs": 242.20000004768372,
+        "scriptMs": 3.817,
+        "layoutMs": 1.111
+      },
+      {
+        "lcpMs": 156,
+        "cls": 0.003393089644693782,
+        "shifts": [
+          {
+            "value": 0.003393089644693782,
+            "at": 157.30000001192093,
+            "sources": [
+              {
+                "tag": "H1",
+                "id": "",
+                "className": "",
+                "before": {
+                  "x": 411.15625,
+                  "y": 341.265625,
+                  "width": 377.6875,
+                  "height": 119.234375,
+                  "top": 341.265625,
+                  "right": 788.84375,
+                  "bottom": 460.5,
+                  "left": 411.15625
+                },
+                "after": {
+                  "x": 411.15625,
+                  "y": 295.765625,
+                  "width": 377.6875,
+                  "height": 119.234375,
+                  "top": 295.765625,
+                  "right": 788.84375,
+                  "bottom": 415,
+                  "left": 411.15625
+                }
+              },
+              {
+                "tag": "P",
+                "id": "",
+                "className": "claim",
+                "before": {
+                  "x": 368.515625,
+                  "y": 303.265625,
+                  "width": 462.953125,
+                  "height": 26,
+                  "top": 303.265625,
+                  "right": 831.46875,
+                  "bottom": 329.265625,
+                  "left": 368.515625
+                },
+                "after": {
+                  "x": 368.515625,
+                  "y": 257.765625,
+                  "width": 462.953125,
+                  "height": 26,
+                  "top": 257.765625,
+                  "right": 831.46875,
+                  "bottom": 283.765625,
+                  "left": 368.515625
+                }
+              }
+            ]
+          }
+        ],
+        "fcpMs": 156,
+        "readyMs": 241.20000004768372,
+        "responseEndMs": 235.30000001192093,
+        "scriptMs": 5.271,
+        "layoutMs": 0.962
+      },
+      {
+        "lcpMs": 156,
+        "cls": 0.003393089644693782,
+        "shifts": [
+          {
+            "value": 0.003393089644693782,
+            "at": 156.19999998807907,
+            "sources": [
+              {
+                "tag": "H1",
+                "id": "",
+                "className": "",
+                "before": {
+                  "x": 411.15625,
+                  "y": 341.265625,
+                  "width": 377.6875,
+                  "height": 119.234375,
+                  "top": 341.265625,
+                  "right": 788.84375,
+                  "bottom": 460.5,
+                  "left": 411.15625
+                },
+                "after": {
+                  "x": 411.15625,
+                  "y": 295.765625,
+                  "width": 377.6875,
+                  "height": 119.234375,
+                  "top": 295.765625,
+                  "right": 788.84375,
+                  "bottom": 415,
+                  "left": 411.15625
+                }
+              },
+              {
+                "tag": "P",
+                "id": "",
+                "className": "claim",
+                "before": {
+                  "x": 368.515625,
+                  "y": 303.265625,
+                  "width": 462.953125,
+                  "height": 26,
+                  "top": 303.265625,
+                  "right": 831.46875,
+                  "bottom": 329.265625,
+                  "left": 368.515625
+                },
+                "after": {
+                  "x": 368.515625,
+                  "y": 257.765625,
+                  "width": 462.953125,
+                  "height": 26,
+                  "top": 257.765625,
+                  "right": 831.46875,
+                  "bottom": 283.765625,
+                  "left": 368.515625
+                }
+              }
+            ]
+          }
+        ],
+        "fcpMs": 156,
+        "readyMs": 247.30000001192093,
+        "responseEndMs": 241.60000002384186,
+        "scriptMs": 3.612,
+        "layoutMs": 0.593
+      },
+      {
+        "lcpMs": 160,
+        "cls": 0.003393089644693782,
+        "shifts": [
+          {
+            "value": 0.003393089644693782,
+            "at": 158.60000002384186,
+            "sources": [
+              {
+                "tag": "H1",
+                "id": "",
+                "className": "",
+                "before": {
+                  "x": 411.15625,
+                  "y": 341.265625,
+                  "width": 377.6875,
+                  "height": 119.234375,
+                  "top": 341.265625,
+                  "right": 788.84375,
+                  "bottom": 460.5,
+                  "left": 411.15625
+                },
+                "after": {
+                  "x": 411.15625,
+                  "y": 295.765625,
+                  "width": 377.6875,
+                  "height": 119.234375,
+                  "top": 295.765625,
+                  "right": 788.84375,
+                  "bottom": 415,
+                  "left": 411.15625
+                }
+              },
+              {
+                "tag": "P",
+                "id": "",
+                "className": "claim",
+                "before": {
+                  "x": 368.515625,
+                  "y": 303.265625,
+                  "width": 462.953125,
+                  "height": 26,
+                  "top": 303.265625,
+                  "right": 831.46875,
+                  "bottom": 329.265625,
+                  "left": 368.515625
+                },
+                "after": {
+                  "x": 368.515625,
+                  "y": 257.765625,
+                  "width": 462.953125,
+                  "height": 26,
+                  "top": 257.765625,
+                  "right": 831.46875,
+                  "bottom": 283.765625,
+                  "left": 368.515625
+                }
+              }
+            ]
+          }
+        ],
+        "fcpMs": 160,
+        "readyMs": 246.80000001192093,
+        "responseEndMs": 241.5,
+        "scriptMs": 3.332,
+        "layoutMs": 0.903
+      },
+      {
+        "lcpMs": 168,
+        "cls": 0,
+        "shifts": [],
+        "fcpMs": 168,
+        "readyMs": 246.0999999642372,
+        "responseEndMs": 240.89999997615814,
+        "scriptMs": 3.104,
+        "layoutMs": 0.623
+      },
+      {
+        "lcpMs": 160,
+        "cls": 0.003393089644693782,
+        "shifts": [
+          {
+            "value": 0.003393089644693782,
+            "at": 160,
+            "sources": [
+              {
+                "tag": "H1",
+                "id": "",
+                "className": "",
+                "before": {
+                  "x": 411.15625,
+                  "y": 341.265625,
+                  "width": 377.6875,
+                  "height": 119.234375,
+                  "top": 341.265625,
+                  "right": 788.84375,
+                  "bottom": 460.5,
+                  "left": 411.15625
+                },
+                "after": {
+                  "x": 411.15625,
+                  "y": 295.765625,
+                  "width": 377.6875,
+                  "height": 119.234375,
+                  "top": 295.765625,
+                  "right": 788.84375,
+                  "bottom": 415,
+                  "left": 411.15625
+                }
+              },
+              {
+                "tag": "P",
+                "id": "",
+                "className": "claim",
+                "before": {
+                  "x": 368.515625,
+                  "y": 303.265625,
+                  "width": 462.953125,
+                  "height": 26,
+                  "top": 303.265625,
+                  "right": 831.46875,
+                  "bottom": 329.265625,
+                  "left": 368.515625
+                },
+                "after": {
+                  "x": 368.515625,
+                  "y": 257.765625,
+                  "width": 462.953125,
+                  "height": 26,
+                  "top": 257.765625,
+                  "right": 831.46875,
+                  "bottom": 283.765625,
+                  "left": 368.515625
+                }
+              }
+            ]
+          }
+        ],
+        "fcpMs": 160,
+        "readyMs": 243.5,
+        "responseEndMs": 237.60000002384186,
+        "scriptMs": 3.7439999999999998,
+        "layoutMs": 0.6849999999999999
+      },
+      {
+        "lcpMs": 172,
+        "cls": 0,
+        "shifts": [],
+        "fcpMs": 172,
+        "readyMs": 245.4000000357628,
+        "responseEndMs": 239.9000000357628,
+        "scriptMs": 3.904,
+        "layoutMs": 0.892
+      },
+      {
+        "lcpMs": 168,
+        "cls": 0,
+        "shifts": [],
+        "fcpMs": 168,
+        "readyMs": 248.9000000357628,
+        "responseEndMs": 243.5,
+        "scriptMs": 3.505,
+        "layoutMs": 0.182
+      },
+      {
+        "lcpMs": 176,
+        "cls": 0,
+        "shifts": [],
+        "fcpMs": 176,
+        "readyMs": 249.10000002384186,
+        "responseEndMs": 243.5,
+        "scriptMs": 3.155,
+        "layoutMs": 0.892
+      },
+      {
+        "lcpMs": 176,
+        "cls": 0,
+        "shifts": [],
+        "fcpMs": 176,
+        "readyMs": 249.69999998807907,
+        "responseEndMs": 243.5999999642372,
+        "scriptMs": 3.9569999999999994,
+        "layoutMs": 0.864
+      }
+    ]
+  },
+  "responses": {
+    "before": [],
+    "after": []
+  },
+  "scrolls": {
+    "before": [],
+    "after": []
+  },
+  "exceptions": []
+}

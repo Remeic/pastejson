@@ -1,6 +1,6 @@
 // Minimal fixed-row-height virtual scroller. No deps.
 // DOM: .vscroll (scroll container) > .vs-spacer (total height) + .vs-win (translated window)
-// One innerHTML assignment per paint frame (rAF-coalesced; scroll events land before rAF,
+// One window update per paint frame (rAF-coalesced; scroll events land before rAF,
 // so programmatic scrollTop set + paint collapse into a single paint).
 
 export interface VScrollOpts {
@@ -24,6 +24,7 @@ export class VScroll {
   private scrollH = 0; // spacer height in px (capped when the doc is huge)
   private widthPx = 0;
   private ticking = false;
+  private frameId = 0;
   private painted = false;
   private ro: ResizeObserver | null = null;
   // last-written style values — skip redundant style writes
@@ -55,6 +56,7 @@ export class VScroll {
 
   setRowCount(n: number): void {
     this.rowCount = n;
+    this.pFirst = -1; // callers can change row content without changing its count
     this.painted = true;
     const contentH = n * this.opts.rowH;
     this.scrollH = contentH > MAX_SCROLL_H ? MAX_SCROLL_H : contentH;
@@ -146,7 +148,7 @@ export class VScroll {
   schedule(): void {
     if (!this.ticking) {
       this.ticking = true;
-      requestAnimationFrame(this.doPaint);
+      this.frameId = requestAnimationFrame(this.doPaint);
     }
   }
 
@@ -155,27 +157,45 @@ export class VScroll {
     const rowH = this.opts.rowH;
     const overscan = this.opts.overscan ?? 6;
     // row (float) sitting at the viewport top, in compressed scroll space
-    const rt = this.topRowFor(this.host.scrollTop);
+    const scrollTop = this.host.scrollTop; // read before DOM writes can trigger layout/anchoring
+    const rt = this.topRowFor(scrollTop);
     const first = Math.max(0, Math.floor(rt) - overscan);
     const count = Math.ceil(this.host.clientHeight / rowH) + overscan * 2;
     const last = Math.min(first + count, this.rowCount);
     const realFirst = Math.min(first, Math.max(0, this.rowCount - 1));
     const n = Math.max(0, last - realFirst);
     if (realFirst === this.pFirst && n === this.pCount && this.rowCount === this.pRows) return;
+    const delta = realFirst - this.pFirst;
+    // Small scrolls retain overlapping rows. Explicit repaint/count updates
+    // invalidate pFirst, so changed search/tree state still gets a full paint.
+    if (this.pFirst >= 0 && this.pCount === n && this.pRows === this.rowCount &&
+      this.win.childElementCount === n && Math.abs(delta) < n && Math.abs(delta) <= overscan) {
+      if (delta > 0) {
+        const html = this.opts.paint(this.pFirst + n, delta);
+        for (let i = 0; i < delta; i++) this.win.firstElementChild!.remove();
+        this.win.insertAdjacentHTML('beforeend', html);
+      } else {
+        const html = this.opts.paint(realFirst, -delta);
+        for (let i = 0; i < -delta; i++) this.win.lastElementChild!.remove();
+        this.win.insertAdjacentHTML('afterbegin', html);
+      }
+    } else {
+      this.win.innerHTML = this.rowCount === 0 ? '' : this.opts.paint(realFirst, n);
+    }
     this.pFirst = realFirst;
     this.pCount = n;
     this.pRows = this.rowCount;
-    const html = this.rowCount === 0 ? '' : this.opts.paint(realFirst, n);
-    this.win.innerHTML = html;
     // Place the window so row `rt` lands at the viewport top. At 1:1 this is
     // exactly realFirst*rowH (unchanged); compressed, the window rides the
     // mapped offset so deep rows stay reachable.
-    this.win.style.transform = 'translateY(' + (this.host.scrollTop - (rt - realFirst) * rowH) + 'px)';
+    this.win.style.transform = 'translateY(' + (scrollTop - (rt - realFirst) * rowH) + 'px)';
   }
 
   private readonly doPaint = (): void => this.paintNow();
 
   destroy(): void {
+    cancelAnimationFrame(this.frameId); // an old painter can reference cleared document state
+    this.painted = false;
     this.host.removeEventListener('scroll', this.onScroll);
     this.ro?.disconnect();
   }
