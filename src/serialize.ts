@@ -64,11 +64,13 @@ export function emitJson(
   value: unknown,
   indent: number | '\t',
   _rawLenHint: number,
+  onPretty?: (pretty: string) => void,
 ): EmitResult {
   if (value === null || typeof value !== 'object') {
     // A scalar has one line and one token. Native stringify supplies its
     // length and normalizes non-finite numbers. Indent has no effect here.
     const pretty = JSON.stringify(value) ?? 'null';
+    if (onPretty) onPretty(pretty);
     const c = pretty.charCodeAt(0);
     const type = c === 34 ? T_STR : c === 116 ? T_TRUE : c === 102 ? T_FALSE : c === 110 ? T_NULL : T_NUM;
     return {
@@ -80,6 +82,7 @@ export function emitJson(
     };
   }
   const pretty = JSON.stringify(value, null, indent) ?? 'null';
+  if (onPretty) onPretty(pretty);
   const indLen = typeof indent === 'number' ? indent : 1;
   const plen = pretty.length;
 
