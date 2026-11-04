@@ -1,4 +1,5 @@
 import './style.css';
+import { beautifyJson } from './beautify';
 import { parseInput } from './parse';
 import { buildView, ensureMin, buildMinTokens, type ViewModel } from './viewmodel';
 import type { FlatTree } from './tree';
@@ -61,6 +62,9 @@ let curView: ViewName = 'text';
 let indent: number | '\t' = 2;
 let reqId = 0;
 let lastRaw = '';
+// true once the editor text diverges from lastRaw — makes the cached
+// beautify path a flag check instead of a multi-MB string comparison
+let editDirty = false;
 let bytesIn = 0;
 let lastFormatMs = 0;
 let wantCopyMin = false;
@@ -275,6 +279,7 @@ function enterEdit(): void {
   closeDiffPanel();
   out.hidden = true;
   setTa(lastRaw, false);
+  editDirty = false;
   setMode('editing');
   inTa.focus();
   inTa.setSelectionRange(1e9, 1e9); // clamps to end
@@ -294,6 +299,47 @@ function exitEdit(): void {
     return;
   }
   load(v); // errors land in error mode, caret at offset — the fix-it loop
+}
+
+// in-place beautify: an untouched document already has its pretty text cached
+// in vm.pretty — zero parse, zero stringify, zero walk. Hand-edited input pays
+// exactly one native parse + one native stringify (no token/line-index walk).
+function beautify(): void {
+  if (mode !== 'editing') return;
+  const raw = inTa.value;
+  if (!raw || /^\s*$/.test(raw)) return;
+  const t0 = performance.now();
+  let pretty: string;
+  let cached = false;
+  if (vm && !editDirty) {
+    pretty = vm.pretty;
+    cached = true;
+  } else {
+    const r = beautifyJson(raw, indent);
+    if (!r.ok) {
+      toast(r.line > 0 ? `Invalid JSON — line ${r.line}, col ${r.col}` : 'Invalid JSON');
+      if (r.offset >= 0 && r.offset <= raw.length) {
+        try {
+          inTa.setSelectionRange(r.offset, Math.min(r.offset + 40, raw.length));
+        } catch {
+          /* ignore */
+        }
+      }
+      return;
+    }
+    pretty = r.pretty;
+  }
+  if (pretty === raw) {
+    toast('Already beautified');
+    return;
+  }
+  inTa.value = pretty;
+  // cached pretty is the current document → Esc/X can restore without re-parsing
+  if (cached) lastRaw = pretty;
+  const ms = performance.now() - t0;
+  toast(`Beautified${cached ? ' (cached)' : ''} · ${ms < 1 ? '<1' : Math.round(ms)} ms`);
+  inTa.setSelectionRange(0, 0);
+  inTa.scrollTop = 0;
 }
 
 // ---------- search (lazy island orchestration) ----------
@@ -742,7 +788,10 @@ inTa.addEventListener('paste', (e: ClipboardEvent) => {
 // typing / native fallback paste into textarea (debounced)
 let debounceT = 0;
 inTa.addEventListener('input', () => {
-  if (mode === 'editing') return; // sticky: no parse per keystroke
+  if (mode === 'editing') {
+    editDirty = true;
+    return; // sticky: no parse per keystroke
+  }
   clearTimeout(debounceT);
   debounceT = window.setTimeout(() => {
     const v = inTa.value;
@@ -785,6 +834,7 @@ toolbar.addEventListener('click', (e) => {
   if (!el) return;
   if (el.id === 'btn-new') return resetToLanding();
   if (el.id === 'btn-edit') return mode === 'editing' ? exitEdit() : enterEdit();
+  if (el.id === 'btn-beautify') return beautify();
   if (el.id === 'btn-copyp') return copyText(vm?.pretty ?? '');
   if (el.id === 'btn-copym') {
     if (!vm) return;
@@ -944,6 +994,14 @@ document.addEventListener('keydown', (e) => {
       void openSearch();
     }
   }
+});
+
+// ⌘B / Ctrl+B = beautify the source in place (editing only)
+document.addEventListener('keydown', (e) => {
+  if (mode !== 'editing' || !(e.metaKey || e.ctrlKey) || e.altKey) return;
+  if (e.key.toLowerCase() !== 'b') return;
+  e.preventDefault();
+  beautify();
 });
 
 // diff panel controls

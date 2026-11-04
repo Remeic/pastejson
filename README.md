@@ -6,6 +6,7 @@
 - **Instant** — one ~58 KB HTML file (~20 KB gzipped), no framework, zero runtime dependencies
 - **Scales** — Web Worker pipeline above 256 KB, fixed-row virtualized rendering: multi-MB docs with no main-thread freeze
 - **Views** — Text (syntax-highlighted), Tree (collapsible), Minified, **Diff** (changes-only or side-by-side), and **Find** (<kbd>⌘F</kbd>/<kbd>Ctrl+F</kbd>) with match-case + regex toggles, in Text *and* Tree views
+- **Beautify in place** — <kbd>⌘B</kbd>/<kbd>Ctrl+B</kbd> in Edit reformats the source textarea; an untouched document reuses the cached pretty text (zero re-parse)
 - **JSONL** — newline-delimited documents are detected and handled automatically
 - **100% local** — no analytics, no network calls after load, works offline
 

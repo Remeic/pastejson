@@ -2,6 +2,7 @@
 import assert from 'node:assert';
 import { tokenize, T_STR, T_NUM, T_KEY, T_PUNCT, T_TRUE, T_FALSE, T_NULL, T_ERR } from '../src/tokenizer';
 import { parseJson, parseInput } from '../src/parse';
+import { beautifyJson } from '../src/beautify';
 import { emitJson } from '../src/serialize';
 import { buildView, ensureMin, buildMinTokens } from '../src/viewmodel';
 import { flatten, buildVisible } from '../src/tree';
@@ -99,6 +100,45 @@ ok('parse error line/col extraction', () => {
 ok('parse valid nested', () => {
   const r = parseJson('{"a":[1,{"b":null}]}');
   assert.ok(r.ok);
+});
+
+// ---------- beautify (edit-mode in-place formatter) ----------
+ok('beautifyJson: minified object → indented native output', () => {
+  const src = '{"a":[1,2],"b":"x"}';
+  const r = beautifyJson(src, 2);
+  assert.ok(r.ok);
+  if (r.ok) {
+    assert.strictEqual(r.pretty, JSON.stringify(JSON.parse(src), null, 2));
+    assert.strictEqual(r.pretty, '{\n  "a": [\n    1,\n    2\n  ],\n  "b": "x"\n}');
+  }
+});
+
+ok('beautifyJson: tab indent and scalar root', () => {
+  const obj = beautifyJson('{"a":1}', '\t');
+  assert.ok(obj.ok);
+  if (obj.ok) assert.ok(obj.pretty.startsWith('{\n\t"a"'));
+  const scalar = beautifyJson('"x"', 2);
+  assert.ok(scalar.ok);
+  if (scalar.ok) assert.strictEqual(scalar.pretty, '"x"');
+});
+
+ok('beautifyJson: JSONL matches the viewer array wrap', () => {
+  const r = beautifyJson('{"a":1}\n{"b":2}', 2);
+  assert.ok(r.ok);
+  if (r.ok) assert.strictEqual(r.pretty, JSON.stringify([{ a: 1 }, { b: 2 }], null, 2));
+});
+
+ok('beautifyJson: invalid input reports an error', () => {
+  const r = beautifyJson('{\n  "a": oops\n}', 2);
+  assert.ok(!r.ok);
+  if (!r.ok) {
+    assert.ok(r.message.length > 0);
+    if (r.line > 0) {
+      assert.strictEqual(r.line, 2);
+      assert.ok(r.col > 0);
+      assert.ok(r.offset >= 0);
+    }
+  }
 });
 
 // ---------- viewmodel ----------

@@ -68,6 +68,9 @@ body[data-mode=loaded] #in { display: none; }
   opacity: 0.4; cursor: not-allowed;
 }
 #toolbar button:disabled:hover { border-color: var(--line); }
+/* Beautify is an editor action — keep the loaded toolbar unchanged. */
+#btn-beautify { display: none; }
+body[data-mode=editing] #btn-beautify { display: inline-block; }
 .seg { display: flex; gap: 4px; }
 /* .on must out-rank `#toolbar button` (1,0,1) — plain class (0,1,0) lost the
    specificity fight and the active-section highlight never painted.
