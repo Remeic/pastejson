@@ -9,6 +9,7 @@ Open [https://json.justgiulio.dev/](https://json.justgiulio.dev/) and paste JSON
 ## What you get
 
 - Pretty-print with 2-space, 4-space or tab indent
+- In-place Beautify in the editor (⌘B / Ctrl+B)
 - Collapsible tree view
 - Minified output, one click copy
 - Diff two JSON documents (changes view + side by side)
